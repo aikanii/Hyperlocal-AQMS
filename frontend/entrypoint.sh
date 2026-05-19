@@ -45,5 +45,8 @@ EOF
     echo "Self-signed cert with SANs generated."
 fi
 
+# Substitute DOMAIN env var into Nginx config template
+envsubst '${DOMAIN}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
+
 echo "Starting Nginx with DOMAIN=$DOMAIN..."
-exec /docker-entrypoint.sh nginx -g "daemon off;"
+exec nginx -g "daemon off;"
