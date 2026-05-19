@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import io from 'socket.io-client'
+import axios from 'axios'
 import { API_URL, API_BASE_URL } from './config'
 
 // Auth
