@@ -5,9 +5,9 @@ import axios from 'axios'
 import App from './App.jsx'
 
 const initApp = async () => {
-  // Try to load dynamic tunnel URL from raw GitHub first
+  // Try to load dynamic tunnel URL from raw GitHub first (cache-busted to bypass raw.githubusercontent.com CDN caching)
   try {
-    const response = await fetch('https://raw.githubusercontent.com/aikanii/HY-AQMS/main/frontend/public/api_url.json');
+    const response = await fetch('https://raw.githubusercontent.com/aikanii/HY-AQMS/main/frontend/public/api_url.json?t=' + Date.now());
     if (response.ok) {
       const data = await response.json();
       if (data && data.url) {
