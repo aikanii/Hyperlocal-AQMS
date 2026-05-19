@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import io from 'socket.io-client'
-import axios from 'axios'
-import { API_URL } from './config'
+import { API_URL, API_BASE_URL } from './config'
 
 // Auth
 import { AuthProvider, useAuth } from './contexts/AuthContext'
@@ -150,6 +149,7 @@ const AppInner = () => {
   const [showRegionSelect, setShowRegionSelect] = useState(false);
   const [selectedRegion, setSelectedRegion] = useState(() => localStorage.getItem('aqms_region') || 'all');
   const [notify, setNotify] = useState(null);
+  const [showConnectionModal, setShowConnectionModal] = useState(false);
 
   // Show splash on initial boot, then Region Selector if no region is saved
   useEffect(() => {
@@ -309,9 +309,25 @@ const AppInner = () => {
           <div>
             <DigitalClock />
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', letterSpacing: '1px', marginTop: '1rem' }}>
-            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#2ecc71', boxShadow: '0 0 10px #2ecc71' }} />
-            NETWORK ONLINE
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', letterSpacing: '1px' }}>
+              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#2ecc71', boxShadow: '0 0 10px #2ecc71' }} />
+              NETWORK ONLINE
+            </div>
+            <button
+              onClick={() => setShowConnectionModal(true)}
+              style={{
+                background: 'transparent', border: 'none', color: 'var(--text-dim)',
+                cursor: 'pointer', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', fontSize: '0.95rem', padding: '2px',
+                transition: 'color 0.2s'
+              }}
+              title="Connection Settings"
+              onMouseEnter={(e) => e.target.style.color = 'var(--accent)'}
+              onMouseLeave={(e) => e.target.style.color = 'var(--text-dim)'}
+            >
+              ⚙️
+            </button>
           </div>
         </div>
       </aside>
@@ -329,6 +345,94 @@ const AppInner = () => {
         </div>
       </main>
     </div>
+
+    {showConnectionModal && (
+      <div className="modal-overlay" style={{
+        position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+        background: 'rgba(5, 11, 13, 0.85)', backdropFilter: 'blur(8px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+        fontFamily: '"Times New Roman", Times, serif'
+      }}>
+        <div className="glass-panel" style={{
+          maxWidth: '480px', width: '90%', padding: '2.5rem',
+          border: '1px solid var(--border)', borderRadius: '16px',
+          background: 'var(--panel)', boxShadow: '0 20px 50px rgba(0,0,0,0.6)',
+          position: 'relative'
+        }}>
+          <h3 style={{ margin: '0 0 0.5rem 0', color: 'var(--accent)', fontSize: '1.4rem', fontWeight: '800', letterSpacing: '1px' }}>
+            🛰️ CONNECTION SETTINGS
+          </h3>
+          <p style={{ margin: '0 0 1.5rem 0', color: 'var(--text-dim)', fontSize: '0.85rem', lineHeight: '1.4' }}>
+            Configure your active backend API URL (e.g. localhost, local network IP, or public ngrok/localtunnel URL). This enables synchronization across different devices and screen sizes.
+          </p>
+
+          <div style={{ marginBottom: '1.5rem' }}>
+            <label style={{ display: 'block', color: 'var(--text)', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '0.5rem', letterSpacing: '1px' }}>
+              BACKEND API URL
+            </label>
+            <input
+              type="text"
+              id="connection-api-url"
+              defaultValue={localStorage.getItem('aqms_api_url') || API_BASE_URL}
+              placeholder="e.g. http://192.168.1.100:3000"
+              style={{
+                width: '100%', padding: '0.8rem',
+                background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border)',
+                borderRadius: '8px', color: 'var(--text)', fontSize: '0.9rem',
+                fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box'
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: '1rem' }}>
+            <button
+              onClick={() => {
+                const val = document.getElementById('connection-api-url').value.trim();
+                if (val) {
+                  localStorage.setItem('aqms_api_url', val);
+                } else {
+                  localStorage.removeItem('aqms_api_url');
+                }
+                window.location.reload();
+              }}
+              style={{
+                flex: 1, padding: '0.8rem',
+                background: 'linear-gradient(135deg, #02eff0, #00d2ff)',
+                color: '#0b1519', border: 'none', borderRadius: '8px',
+                fontWeight: 'bold', cursor: 'pointer', fontSize: '0.85rem'
+              }}
+            >
+              Apply & Reload
+            </button>
+            <button
+              onClick={() => {
+                localStorage.removeItem('aqms_api_url');
+                window.location.reload();
+              }}
+              style={{
+                padding: '0.8rem 1rem',
+                background: 'rgba(239, 68, 68, 0.1)',
+                color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.2)',
+                borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem'
+              }}
+            >
+              Reset
+            </button>
+            <button
+              onClick={() => setShowConnectionModal(false)}
+              style={{
+                padding: '0.8rem 1.2rem',
+                background: 'transparent',
+                color: 'var(--text-dim)', border: '1px solid var(--border)',
+                borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem'
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </>
   );
 };

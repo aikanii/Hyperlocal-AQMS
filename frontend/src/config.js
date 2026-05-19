@@ -7,15 +7,20 @@ const isProd = import.meta.env.PROD;
 // VITE_API_URL should be set in Vercel to something like: https://api.yourdomain.com
 // If not set, it falls back to window.location.origin (useful for the local Docker setup)
 const getApiBaseUrl = () => {
+  // Allow manual configuration via local storage override (useful for hybrid/cross-device Vercel setups)
+  const overrideUrl = typeof window !== 'undefined' ? window.localStorage.getItem('aqms_api_url') : null;
+  if (overrideUrl) {
+    return overrideUrl;
+  }
   if (import.meta.env.VITE_API_URL) {
     return import.meta.env.VITE_API_URL;
   }
   // If running on a Vercel domain and no specific API URL is configured,
   // target the local backend port 3000 directly.
-  if (window.location.hostname.endsWith('.vercel.app')) {
+  if (typeof window !== 'undefined' && window.location.hostname.endsWith('.vercel.app')) {
     return 'http://localhost:3000';
   }
-  return window.location.origin;
+  return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
 };
 
 export const API_BASE_URL = getApiBaseUrl();
