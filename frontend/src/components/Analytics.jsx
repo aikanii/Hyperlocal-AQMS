@@ -10,12 +10,12 @@ ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, T
 
 // WHO/US-EPA Air Quality Index (PM2.5-based)
 const PAQI = [
-  { max: 50, color: 'var(--aqi-good)',              label: 'Good' },
-  { max: 100, color: 'var(--aqi-moderate)',          label: 'Moderate' },
-  { max: 150, color: 'var(--aqi-sensitive)',         label: 'Sensitive' },
-  { max: 200, color: 'var(--aqi-unhealthy)',         label: 'Unhealthy' },
-  { max: 300, color: 'var(--aqi-very-unhealthy)',    label: 'Very Unhealthy' },
-  { max: Infinity, color: 'var(--aqi-hazardous)',       label: 'Hazardous' },
+  { max: 50, color: 'var(--aqi-good)', label: 'Good' },
+  { max: 100, color: 'var(--aqi-moderate)', label: 'Moderate' },
+  { max: 150, color: 'var(--aqi-sensitive)', label: 'Sensitive' },
+  { max: 200, color: 'var(--aqi-unhealthy)', label: 'Unhealthy' },
+  { max: 300, color: 'var(--aqi-very-unhealthy)', label: 'Very Unhealthy' },
+  { max: Infinity, color: 'var(--aqi-hazardous)', label: 'Hazardous' },
 ];
 
 const getAQIColor = (pm25) => {
@@ -30,6 +30,8 @@ const Analytics = () => {
   const [stats, setStats] = useState([]);
   const [readings, setReadings] = useState([]);
   const [predictions, setPredictions] = useState([]);
+  // 'idle' | 'warming_up' | 'ready' | 'error'
+  const [mlStatus, setMlStatus] = useState('idle');
   const [range, setRange] = useState('24h');
   const [loading, setLoading] = useState(true);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -57,17 +59,29 @@ const Analytics = () => {
     const fetchDetails = async () => {
       setDetailsLoading(true);
       try {
-        const [statsRes, readingsRes, mlRes] = await Promise.all([
+        const [statsRes, readingsRes] = await Promise.all([
           axios.get(`/api/stats/device/${selectedDeviceId}?range=${range}`),
           axios.get(`/api/readings?device_id=${selectedDeviceId}&limit=50`),
-          axios.get(`/api/ml/predict/device/${selectedDeviceId}`).catch(err => {
-            console.warn('ML Prediction not available yet');
-            return { data: [] };
-          })
         ]);
         setStats(statsRes.data);
         setReadings(readingsRes.data);
-        setPredictions(mlRes.data || []);
+
+        // Handle ML prediction separately so a 503 never blocks stats/readings
+        try {
+          const mlRes = await axios.get(`/api/ml/predict/device/${selectedDeviceId}`);
+          setPredictions(mlRes.data || []);
+          setMlStatus('ready');
+        } catch (mlErr) {
+          if (mlErr.response?.status === 503) {
+            // Model is still training — expected on cold start, not an error
+            setPredictions([]);
+            setMlStatus('warming_up');
+          } else {
+            console.error('ML prediction error:', mlErr);
+            setPredictions([]);
+            setMlStatus('error');
+          }
+        }
       } catch (err) {
         console.error('Error fetching device details:', err);
       } finally {
@@ -100,7 +114,7 @@ const Analytics = () => {
   // Pad arrays with nulls so they align on the X-axis
   const pm25Data = [...pastPm25, ...Array(futureLabels.length).fill(null)];
   const pm10Data = [...pastPm10, ...Array(futureLabels.length).fill(null)];
-  const predictedPm25Data = pastPm25.length > 0 
+  const predictedPm25Data = pastPm25.length > 0
     ? [...Array(pastLabels.length - 1).fill(null), pastPm25[pastPm25.length - 1], ...futurePm25]
     : [];
 
@@ -213,14 +227,14 @@ const Analytics = () => {
                 <div>
                   <h2 style={{ fontSize: '2.2rem', fontWeight: '800', margin: '0 0 0.5rem 0' }}>{selectedDevice.name}</h2>
                   <p style={{ color: 'var(--text-dim)', margin: 0 }}>
-                    Coordinates: {selectedDevice.lat.toFixed(4)}, {selectedDevice.lng.toFixed(4)} • Status: 
+                    Coordinates: {selectedDevice.lat.toFixed(4)}, {selectedDevice.lng.toFixed(4)} • Status:
                     <span style={{ color: 'var(--accent)', marginLeft: '0.5rem', fontWeight: 'bold' }}>{selectedDevice.status.toUpperCase()}</span>
                   </p>
                 </div>
-                <a 
-                  href={`/api/export?device_id=${selectedDeviceId}`} 
+                <a
+                  href={`/api/export?device_id=${selectedDeviceId}`}
                   download={`${selectedDeviceId}-data.csv`}
-                  className="glass-panel hover-lift" 
+                  className="glass-panel hover-lift"
                   style={{ padding: '0.75rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem', textDecoration: 'none', color: 'var(--accent)', fontSize: '0.85rem', fontWeight: 'bold', border: '1px solid var(--accent)' }}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
@@ -300,6 +314,39 @@ const Analytics = () => {
                   ))}
                 </div>
               </div>
+
+              {/* ML status notice — shown inside the chart panel, above the chart */}
+              {mlStatus === 'warming_up' && (
+                <div style={{
+                  marginBottom: '1rem',
+                  padding: '0.6rem 1rem',
+                  borderRadius: '8px',
+                  background: 'rgba(245, 158, 11, 0.08)',
+                  border: '1px solid rgba(245, 158, 11, 0.3)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.6rem',
+                  fontSize: '0.8rem',
+                  color: '#f59e0b',
+                }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
+                  AI model is training on first startup — forecast will appear automatically once ready.
+                </div>
+              )}
+              {mlStatus === 'error' && (
+                <div style={{
+                  marginBottom: '1rem',
+                  padding: '0.6rem 1rem',
+                  borderRadius: '8px',
+                  background: 'rgba(239, 68, 68, 0.08)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  fontSize: '0.8rem',
+                  color: '#ef4444',
+                }}>
+                  AI forecast unavailable. Check ml-service logs for details.
+                </div>
+              )}
+
               <div style={{ height: '350px' }}>
                 <Line data={chartData} options={chartOptions} />
               </div>

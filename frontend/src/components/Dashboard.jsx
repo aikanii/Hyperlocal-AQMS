@@ -84,7 +84,7 @@ const Dashboard = ({ readings }) => {
   // Add prediction data
   const futureLabels = predictions.map(p => {
     const date = new Date(p.time);
-    return '🚀 ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   });
   const futurePm25 = predictions.map(p => p.pm2_5_cal);
 
@@ -268,8 +268,7 @@ const Dashboard = ({ readings }) => {
           
           <div className="glass-panel hover-lift" style={{ padding: '1.5rem', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>
             <div style={{ position: 'absolute', top: 0, left: 0, width: '4px', height: '100%', background: predictedAqiColor }}></div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 'bold', letterSpacing: '1px', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{color: '#f59e0b'}}><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 'bold', letterSpacing: '1px', marginBottom: '0.5rem' }}>
               AI PREDICTED PEAK PM2.5 (24H)
             </div>
             <div style={{ fontSize: '2.2rem', fontWeight: '900', color: predictedAqiColor }}>
