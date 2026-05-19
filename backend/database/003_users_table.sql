@@ -8,5 +8,5 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Default admin:admin (correct bcrypt hash for 'admin')
 INSERT INTO users (username, password_hash) 
-VALUES ('admin', '$2a$10$1BJH4ZxU.o1tW4fkLqUk7Od9ke9KkIkx9fdhswhQtWCupnjERzwsy') 
+VALUES ('admin', '$2a$10$weeJoUKiY.1rpvB0es/Diud6Lzc2byx.LmMhuL5z77PWMyHfErvm2') 
 ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash;
