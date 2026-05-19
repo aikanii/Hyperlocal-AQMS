@@ -135,7 +135,7 @@ const Devices = ({ isAdmin = false, readings = [] }) => {
   return (
     <div style={{ padding: '2rem' }}>
       {/* Header Section */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2.5rem' }}>
+      <div className="devices-header-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2.5rem' }}>
         <div>
           <h2 style={{ fontSize: '2rem', margin: '0 0 0.5rem 0', fontWeight: '800' }}>
             {isAdmin ? '🔌 Device Management' : '📡 Monitoring Network'}
@@ -238,7 +238,7 @@ const Devices = ({ isAdmin = false, readings = [] }) => {
         </div>
       ) : (
         /* ADMIN VIEW: High-Density Technical Management */
-        <div className="glass-panel" style={{ overflow: 'hidden' }}>
+        <div className="glass-panel" style={{ overflowX: 'auto', overflowY: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
             <thead>
               <tr style={{ background: 'var(--panel)', borderBottom: '2px solid var(--border)' }}>

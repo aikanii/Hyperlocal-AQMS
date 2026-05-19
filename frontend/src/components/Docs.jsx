@@ -3,7 +3,7 @@ const Docs = () => {
     <div style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '2rem', maxWidth: '1400px', margin: '0 auto' }}>
       
       {/* Upper Row: Health & Context */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+      <div className="grid-2-col">
         <div className="health-panel glass-panel" style={{ padding: '2.5rem' }}>
           <h2 style={{ marginTop: 0, fontSize: '1.5rem' }}>🌍 WHO Air Quality Guidelines</h2>
           <p style={{ color: 'var(--text-dim)', marginBottom: '2rem', lineHeight: '1.6' }}>
@@ -71,7 +71,7 @@ const Docs = () => {
       </div>
 
       {/* Lower Row: Technical Docs */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+      <div className="grid-2-col">
         <div className="firmware-panel glass-panel" style={{ padding: '2.5rem' }}>
           <h2 style={{ marginTop: 0, fontSize: '1.5rem' }}>Firmware Architecture</h2>
           <p style={{ color: 'var(--text-dim)', marginBottom: '2rem' }}>Hardware specifications and data communication protocol.</p>

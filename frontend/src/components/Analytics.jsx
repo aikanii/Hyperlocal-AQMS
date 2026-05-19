@@ -186,11 +186,11 @@ const Analytics = () => {
   return (
     <div className="analytics-view" style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       {/* Device Selection Sidebar */}
-      <aside style={{ width: '300px', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--overlay-bg)' }}>
+      <aside className="analytics-sidebar" style={{ width: '300px', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--overlay-bg)' }}>
         <div style={{ padding: '1.5rem', borderBottom: '1px solid var(--border)' }}>
           <h3 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '1px' }}>Sensor Placements</h3>
         </div>
-        <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
+        <div className="analytics-sidebar-list" style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
           {devices.map(device => (
             <button
               key={device.device_id}
@@ -218,7 +218,7 @@ const Analytics = () => {
       </aside>
 
       {/* Main Analysis Area */}
-      <main style={{ flex: 1, overflowY: 'auto', padding: '2.5rem', position: 'relative' }}>
+      <main className="analytics-main" style={{ flex: 1, overflowY: 'auto', padding: '2.5rem', position: 'relative' }}>
         {detailsLoading && (
           <div style={{ position: 'absolute', top: '1rem', right: '1rem', fontSize: '0.7rem', color: 'var(--accent)' }}>
             <span className="breathe">FETCHING DATA...</span>
@@ -228,7 +228,7 @@ const Analytics = () => {
         {selectedDevice ? (
           <div className="animate-stagger">
             <header style={{ marginBottom: '2.5rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div className="analytics-header-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <h2 style={{ fontSize: '2.2rem', fontWeight: '800', margin: '0 0 0.5rem 0' }}>{selectedDevice.name}</h2>
                   <p style={{ color: 'var(--text-dim)', margin: 0 }}>
@@ -249,7 +249,7 @@ const Analytics = () => {
             </header>
 
             {/* Recent Metrics */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1.5rem', marginBottom: '2.5rem' }}>
+            <div className="analytics-metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1.5rem', marginBottom: '2.5rem' }}>
               <div className="glass-panel" style={{ padding: '1.5rem' }}>
                 <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '0.8rem' }}>PM2.5</div>
                 <div style={{ fontSize: '2rem', fontWeight: '900', color: getAQIColor(readings[0]?.pm2_5_cal) }}>
