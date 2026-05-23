@@ -52,8 +52,8 @@ const char* root_ca = \
 #define PMS_WARMUP_MS 8000 // ms to let fan spin up on boot
 
 // ─── Timing ──────────────────────────────────────────────────
-// Send one packet per sensor node every 1 minute
-#define READ_INTERVAL 60000 // ms between readings (1 min)
+// Send one packet per sensor node every 2 minutes
+#define READ_INTERVAL 120000 // ms between readings (2 min)
 
 // ─── Objects ─────────────────────────────────────────────────
 DHT dht(DHTPIN, DHTTYPE);

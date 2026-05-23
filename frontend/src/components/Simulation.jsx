@@ -155,6 +155,7 @@ const Simulation = () => {
   });
   const [logs,        setLogs]        = useState([]);
   const [isAutoPilot, setIsAutoPilot] = useState(false);
+  const [cadenceMs,   setCadenceMs]   = useState(120000);  // Default: 2 minutes (120s); can toggle to 60s
 
   // ── Per-sensor toggle state ──────────────────────────────────────────────────
   const [sensorEnabled, setSensorEnabled] = useState({});  // { device_id: bool }
@@ -197,11 +198,12 @@ const Simulation = () => {
       });
     };
 
-    addLog(`Auto-pilot engaged — broadcasting to ${devices.length} sensor(s) every 2 minutes.`, 'info');
+    const cadenceLabel = cadenceMs === 60000 ? '60 seconds' : '2 minutes';
+    addLog(`Auto-pilot engaged — broadcasting to ${devices.length} sensor(s) every ${cadenceLabel}.`, 'info');
     injectAll();
-    const id = setInterval(injectAll, 120000);
+    const id = setInterval(injectAll, cadenceMs);
     return () => { clearInterval(id); addLog('Auto-pilot disengaged.', 'info'); };
-  }, [isAutoPilot, devices]);
+  }, [isAutoPilot, devices, cadenceMs]);
 
   // ── Fetch device list on mount ───────────────────────────────────────────────
   useEffect(() => {
@@ -269,9 +271,10 @@ const Simulation = () => {
       };
 
       inject();                                                        // immediate
-      sensorIntervals.current[device_id] = setInterval(inject, 60000); // then every 60 s
+      sensorIntervals.current[device_id] = setInterval(inject, cadenceMs); // then on cadence
       setSensorEnabled(prev => ({ ...prev, [device_id]: true }));
-      addLog(`▶ STARTED: ${device.name || device_id} — injecting every 60 s`, 'info');
+      const cadenceLabel = cadenceMs === 60000 ? '60 seconds' : '2 minutes';
+      addLog(`▶ STARTED: ${device.name || device_id} — injecting every ${cadenceLabel}`, 'info');
     }
   };
 
@@ -360,6 +363,50 @@ const Simulation = () => {
               )}
               {activeCount} / {devices.length} ACTIVE
             </div>
+          </div>
+        </div>
+
+        {/* Cadence Mode Selector */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', marginBottom: '1.5rem', padding: '1rem', background: 'var(--overlay-bg)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+          <label style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', letterSpacing: '0.5px', margin: 0 }}>
+            BROADCAST CADENCE
+          </label>
+          <button
+            onClick={() => setCadenceMs(60000)}
+            style={{
+              padding: '0.45rem 0.9rem',
+              borderRadius: '6px',
+              border: `1px solid ${cadenceMs === 60000 ? 'rgba(2,239,240,0.6)' : 'rgba(2,239,240,0.25)'}`,
+              background: cadenceMs === 60000 ? 'rgba(2,239,240,0.12)' : 'transparent',
+              color: cadenceMs === 60000 ? 'var(--accent)' : 'var(--text-dim)',
+              fontSize: '0.7rem',
+              fontWeight: '700',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              letterSpacing: '0.4px',
+            }}
+          >
+            60s
+          </button>
+          <button
+            onClick={() => setCadenceMs(120000)}
+            style={{
+              padding: '0.45rem 0.9rem',
+              borderRadius: '6px',
+              border: `1px solid ${cadenceMs === 120000 ? 'rgba(2,239,240,0.6)' : 'rgba(2,239,240,0.25)'}`,
+              background: cadenceMs === 120000 ? 'rgba(2,239,240,0.12)' : 'transparent',
+              color: cadenceMs === 120000 ? 'var(--accent)' : 'var(--text-dim)',
+              fontSize: '0.7rem',
+              fontWeight: '700',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              letterSpacing: '0.4px',
+            }}
+          >
+            120s (2m)
+          </button>
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginLeft: 'auto' }}>
+            {cadenceMs === 60000 ? '⏱️ 60 seconds' : '⏱️ 2 minutes'}
           </div>
         </div>
 
