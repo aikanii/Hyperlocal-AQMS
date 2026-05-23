@@ -36,7 +36,7 @@ lt.stdout.on('data', (data) => {
         const gitPush = spawn('git', ['push', 'origin', 'main'], { shell: true });
         gitPush.on('close', (code) => {
           if (code === 0) {
-            console.log('[HY-AQMS Tunnel] Successfully pushed updated URL to GitHub! Vercel clients will sync in real-time.');
+            console.log('[HY-AQMS Tunnel] Successfully pushed updated URL to GitHub!');
           } else {
             console.error('[HY-AQMS Tunnel] Git push failed. Please verify credentials or internet connection.');
           }

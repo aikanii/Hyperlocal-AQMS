@@ -37,7 +37,7 @@ const Dashboard = ({ readings }) => {
       try {
         const [statsRes, mlRes] = await Promise.all([
           axios.get(`/api/stats/city?range=${range}`),
-          axios.get('/api/ml/predict/city').catch(err => {
+          axios.get('/api/ml/predict/city').catch(() => {
             console.warn('ML Prediction not available yet');
             return { data: [] };
           })
@@ -160,7 +160,6 @@ const Dashboard = ({ readings }) => {
   // Historical Insights Calculation
   const validStats = stats.filter(s => s.avg_pm2_5 != null);
   const peakPm25Stat = validStats.length ? validStats.reduce((prev, curr) => (parseFloat(prev.avg_pm2_5) > parseFloat(curr.avg_pm2_5) ? prev : curr)) : null;
-  const peakPm10Stat = validStats.length ? validStats.reduce((prev, curr) => (parseFloat(prev.avg_pm10) > parseFloat(curr.avg_pm10) ? prev : curr)) : null;
   const avgTemp24h = validStats.length ? (validStats.reduce((sum, s) => sum + Number(s.avg_temperature), 0) / validStats.length).toFixed(1) : '---';
   
   const maxPredictedPm25 = predictions.length > 0 
@@ -168,8 +167,6 @@ const Dashboard = ({ readings }) => {
     : null;
   const predictedAqiColor = maxPredictedPm25 !== null ? getAQIColor(maxPredictedPm25) : 'var(--text-dim)';
   
-  const formatTime = (isoString) => isoString ? new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '---';
-
   if (loading) return <div style={{ padding: '2rem', color: 'var(--text-dim)' }}>Syncing atmospheric data...</div>;
 
   return (

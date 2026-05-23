@@ -125,7 +125,7 @@ const Devices = ({ isAdmin = false, readings = [] }) => {
     try {
       await axios.delete(`/api/devices/${id}`, config);
       fetchDevices();
-    } catch (err) {
+    } catch {
       alert('Failed to delete device. Ensure you are logged in as admin.');
     }
   };

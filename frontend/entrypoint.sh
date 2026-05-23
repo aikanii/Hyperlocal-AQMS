@@ -1,5 +1,8 @@
 #!/bin/sh
 
+# Ensure DOMAIN is always defined so nginx config templates work correctly
+DOMAIN=${DOMAIN:-localhost}
+
 # Ensure certs directory exists
 mkdir -p /etc/nginx/certs
 
@@ -46,7 +49,7 @@ EOF
 fi
 
 # Substitute DOMAIN env var into Nginx config template
-envsubst '${DOMAIN}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
+sed "s/\${DOMAIN}/$DOMAIN/g" < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf
 
 echo "Starting Nginx with DOMAIN=$DOMAIN..."
 exec nginx -g "daemon off;"

@@ -1,5 +1,3 @@
-import { useState } from 'react';
-
 const REGIONS = [
   { id: 'all', name: 'All of Iligan City', icon: '🏙️', desc: 'View global network statistics' },
   { id: 'Poblacion', name: 'Poblacion', icon: '🏦', desc: 'Central governance & business' },

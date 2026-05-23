@@ -298,9 +298,9 @@ const DataFlow = ({ readings }) => {
 
   // ── Periodic tick: forces re-render every 10 s so isActive() stays accurate
   // even when no new Socket.IO readings arrive (i.e. a sensor has gone offline).
-  const [, setTick] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), 10_000);
+    const id = setInterval(() => setNow(Date.now()), 10_000);
     return () => clearInterval(id);
   }, []);
 
@@ -322,8 +322,8 @@ const DataFlow = ({ readings }) => {
   // being marked offline; real firmware sending every 60 s gets 1.5 cycles grace.
   const isActive = useCallback((deviceId) => {
     const r = getReading(deviceId);
-    return r?.time ? Date.now() - new Date(r.time).getTime() < 90_000 : false;
-  }, [getReading]);
+    return r?.time ? now - new Date(r.time).getTime() < 90_000 : false;
+  }, [getReading, now]);
 
   const activeCount = devices.filter(d => isActive(d.device_id)).length;
 
@@ -334,7 +334,7 @@ const DataFlow = ({ readings }) => {
 
   const timeSince = (iso) => {
     if (!iso) return '---';
-    const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+    const s = Math.floor((now - new Date(iso)) / 1000);
     if (s < 60)   return `${s}s ago`;
     if (s < 3600) return `${Math.floor(s / 60)}m ago`;
     return `${Math.floor(s / 3600)}h ago`;

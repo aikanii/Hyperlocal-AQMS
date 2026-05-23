@@ -38,6 +38,12 @@ const MapView = ({ readings }) => {
   const [devices, setDevices] = useState([]);
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [showSensors, setShowSensors] = useState(true);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     axios.get('/api/devices')
@@ -50,7 +56,7 @@ const MapView = ({ readings }) => {
 
   // Compute live analytics
   const analytics = useMemo(() => {
-    const validReadings = readings.filter(r => r && (Date.now() - new Date(r.time).getTime() < 300000));
+    const validReadings = readings.filter(r => r && (now - new Date(r.time).getTime() < 300000));
     const count = validReadings.length;
     const pm25Avg = count > 0 ? (validReadings.reduce((sum, r) => sum + (r.pm2_5_cal || 0), 0) / count).toFixed(1) : '--';
     const status = getAQIInfo(pm25Avg === '--' ? null : Number(pm25Avg));
@@ -66,7 +72,7 @@ const MapView = ({ readings }) => {
     });
 
     return { count, pm25Avg, status, maxStation, maxPm25: maxPm25 ? maxPm25.toFixed(1) : '--' };
-  }, [readings, devices]);
+  }, [readings, devices, now]);
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%', background: 'var(--bg)' }}>

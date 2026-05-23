@@ -56,9 +56,10 @@ def get_predictions(device_id=None, seq_length=24, pred_length=24):
     if not os.path.exists(SCALER_PATH):
         raise HTTPException(status_code=503, detail="Scaler is not available.")
         
-    raw_data = fetch_historical_data(device_id=device_id, days=30) # Fetch recent data to get the last sequence
+    raw_data = fetch_historical_data(device_id=device_id, days=60) # Fetch recent data to get the last sequence
     if not raw_data or len(raw_data) < seq_length:
-        raise HTTPException(status_code=400, detail="Not enough historical data to make a prediction.")
+        logger.warning('Unable to generate forecast due to insufficient historical data.');
+        raise HTTPException(status_code=503, detail="Not enough historical data to make a prediction.")
         
     df = pd.DataFrame(raw_data)
     df['time'] = pd.to_datetime(df['time'])

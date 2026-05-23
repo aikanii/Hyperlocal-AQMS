@@ -1,10 +1,20 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import io from 'socket.io-client'
 import axios from 'axios'
-import { API_URL, API_BASE_URL } from './config'
-
-// Auth
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+
+const VALID_REGION_IDS = ['all', 'Poblacion', 'Tibanga', 'Pala-o', 'Tambacan', 'Suarez'];
+
+const getApiBaseUrlClient = () => {
+  if (typeof window === 'undefined') return 'http://localhost:3000';
+  const localOverride = window.localStorage.getItem('aqms_api_url');
+  if (localOverride) return localOverride;
+  const prodConfigUrl = window.localStorage.getItem('aqms_production_api_url');
+  if (prodConfigUrl && prodConfigUrl !== 'https://dashboard.yourdomain.com') return prodConfigUrl;
+  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+  if (window.location.hostname.endsWith('.vercel.app')) return 'http://localhost:3000';
+  return window.location.origin;
+};
 
 // Components
 import Dashboard from './components/Dashboard'
@@ -151,7 +161,15 @@ const AppInner = () => {
   const [devices, setDevices] = useState([]);
   const [showSplash, setShowSplash] = useState(true);
   const [showRegionSelect, setShowRegionSelect] = useState(false);
-  const [selectedRegion, setSelectedRegion] = useState(() => localStorage.getItem('aqms_region') || 'all');
+  const apiBaseUrl = useMemo(() => getApiBaseUrlClient(), []);
+  const API_URL = apiBaseUrl.replace(/\/$/, '');
+
+  const [selectedRegion, setSelectedRegion] = useState(() => {
+    const stored = localStorage.getItem('aqms_region');
+    return VALID_REGION_IDS.includes(stored) ? stored : 'all';
+  });
+  const [socketStatus, setSocketStatus] = useState('connecting');
+  const [socketError, setSocketError] = useState(null);
   const [notify, setNotify] = useState(null);
   const [showConnectionModal, setShowConnectionModal] = useState(false);
 
@@ -185,13 +203,11 @@ const AppInner = () => {
     { id: 'docs',       label: '📚 Documentation' },
   ];
 
-  // If the active tab is no longer visible (e.g. after logout), reset to map
-  useEffect(() => {
-    const ids = NAV_TABS.map(t => t.id);
-    if (!ids.includes(activeTab)) setActiveTab('map');
-  }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
+  const safeActiveTab = NAV_TABS.some(t => t.id === activeTab) ? activeTab : 'map';
 
   useEffect(() => {
+    axios.defaults.baseURL = API_URL;
+
     const fetchInitial = async () => {
       try {
         const [readingsRes, devicesRes] = await Promise.all([
@@ -206,7 +222,48 @@ const AppInner = () => {
     };
     fetchInitial();
 
-    const socket = io(API_URL, { path: '/socket.io/' });
+    const socket = io(API_URL, {
+      path: '/socket.io',
+      timeout: 30000, // connection attempt timeout
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 20000,
+      // Prefer websocket and fallback to polling if needed
+      transports: ['websocket', 'polling'],
+      autoConnect: true,
+    });
+
+    socket.on('connect', () => {
+      setSocketStatus('connected');
+      setSocketError(null);
+      console.info('[HY-AQMS] Socket connected:', socket.id);
+    });
+
+    socket.on('disconnect', (reason) => {
+      setSocketStatus('disconnected');
+      setSocketError(reason);
+      console.warn('[HY-AQMS] Socket disconnected:', reason);
+    });
+
+    socket.on('connect_error', (error) => {
+      setSocketStatus('disconnected');
+      setSocketError(error?.message || 'Connection error');
+      console.error('[HY-AQMS] Socket connection error:', error);
+    });
+
+    socket.on('reconnect_attempt', (attempt) => {
+      setSocketStatus('reconnecting');
+      setSocketError(null);
+      console.info('[HY-AQMS] Socket reconnect attempt', attempt);
+    });
+
+    socket.on('reconnect', (attempt) => {
+      setSocketStatus('connected');
+      setSocketError(null);
+      console.info('[HY-AQMS] Socket reconnected after', attempt, 'attempt(s)');
+    });
+
     socket.on('new_reading', (payload) => {
       setReadings(prev => {
         const index = prev.findIndex(r => r.device_id === payload.device_id);
@@ -232,20 +289,21 @@ const AppInner = () => {
   const filteredReadings = readings.filter(r => {
     if (selectedRegion === 'all') return true;
     const device = devices.find(d => d.device_id === r.device_id);
-    return device?.region === selectedRegion;
+    const region = device?.region;
+    return region === selectedRegion || String(region).toLowerCase() === 'all';
   });
 
   // Note: We render Simulation unconditionally (if admin) but hide it when inactive,
   // so the auto-pilot interval and log state persist in the background.
   const renderContent = () => {
-    switch (activeTab) {
+    switch (safeActiveTab) {
       case 'dashboard':  return <Dashboard readings={filteredReadings} />;
       case 'analytics':  return <Analytics />;
       case 'map':        return <MapView readings={filteredReadings} />;
       case 'devices':    return <Devices isAdmin={isAdmin} readings={readings} />;
       case 'dataflow':   return <DataFlow readings={readings} />;
       case 'docs':       return <Docs />;
-      default:           return activeTab === 'simulation' ? null : <MapView readings={filteredReadings} />;
+      default:           return safeActiveTab === 'simulation' ? null : <MapView readings={filteredReadings} />;
     }
   };
 
@@ -286,7 +344,7 @@ const AppInner = () => {
 
         <nav style={{ flex: 1, padding: '2rem 1rem' }}>
           {NAV_TABS.map(tab => {
-            const isActive = activeTab === tab.id;
+            const isActive = safeActiveTab === tab.id;
             return (
               <button
                 key={tab.id}
@@ -329,8 +387,18 @@ const AppInner = () => {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '1rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', letterSpacing: '1px' }}>
-              <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#2ecc71', boxShadow: '0 0 10px #2ecc71' }} />
-              NETWORK ONLINE
+              <div style={{
+                width: '8px', height: '8px', borderRadius: '50%',
+                background: socketStatus === 'connected' ? '#2ecc71' : socketStatus === 'reconnecting' ? '#f59e0b' : '#ef4444',
+                boxShadow: socketStatus === 'connected'
+                  ? '0 0 10px #2ecc71'
+                  : socketStatus === 'reconnecting'
+                    ? '0 0 10px #f59e0b'
+                    : '0 0 10px #ef4444'
+              }} />
+              {socketStatus === 'connected' && 'NETWORK ONLINE'}
+              {socketStatus === 'reconnecting' && 'RECONNECTING...'}
+              {socketStatus === 'disconnected' && 'NETWORK OFFLINE'}
             </div>
             <button
               onClick={() => setShowConnectionModal(true)}
@@ -391,7 +459,7 @@ const AppInner = () => {
             <input
               type="text"
               id="connection-api-url"
-              defaultValue={localStorage.getItem('aqms_api_url') || API_BASE_URL}
+              defaultValue={localStorage.getItem('aqms_api_url') || apiBaseUrl}
               placeholder="e.g. http://192.168.1.100:3000"
               style={{
                 width: '100%', padding: '0.8rem',
@@ -497,7 +565,7 @@ class ErrorBoundary extends React.Component {
               CRITICAL INTERFACE FAULT
             </h2>
             <p style={{ fontSize: '0.95rem', color: '#94a3b8', lineHeight: '1.6', margin: '0 0 2rem 0' }}>
-              An unexpected rendering crash occurred. This is commonly caused by an unreachable backend API or missing environment configurations in your Vercel deployment.
+              An unexpected rendering crash occurred. This is commonly caused by an unreachable backend API.
             </p>
             <div style={{
               background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)',

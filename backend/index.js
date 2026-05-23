@@ -46,6 +46,29 @@ const pool = new Pool(
       }
 );
 
+const ensurePredictionsUniqueIndex = async () => {
+  try {
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relname = 'ux_predictions_time_device'
+            AND n.nspname = 'public'
+        ) THEN
+          CREATE UNIQUE INDEX ux_predictions_time_device ON predictions (time, device_id);
+        END IF;
+      END$$;
+    `);
+    console.log('Ensured predictions unique index exists.');
+  } catch (err) {
+    console.error('Could not ensure predictions unique index:', err.message);
+  }
+};
+ensurePredictionsUniqueIndex();
+
 // Redis connection
 const redisClient = redis.createClient({
   url: process.env.REDIS_URL || 'redis://redis:6379'
@@ -62,19 +85,50 @@ const mqttClient = mqtt.connect(process.env.MQTT_URL || 'mqtt://mosquitto:1883',
 
 // --- Middleware & Routes ---
 // (Server start moved to bottom)
-const io = new Server(); 
+const io = new Server();
+// Temporary runtime flag to pause simulator injects.
+// Default to false for production; set to true to stop simulator traffic while debugging.
+let simPaused = false;
+
+// Endpoint to view and toggle simulator pause state (useful for debugging)
+app.get('/api/sim/paused', (req, res) => {
+  res.json({ paused: !!simPaused });
+});
+
+app.post('/api/sim/pause', (req, res) => {
+  try {
+    const body = req.body || {};
+    if (typeof body.pause === 'boolean') {
+      simPaused = body.pause;
+      return res.json({ paused: simPaused });
+    }
+    // toggle if no explicit value provided
+    simPaused = !simPaused;
+    res.json({ paused: simPaused });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 function initServer(server) {
   io.attach(server, {
     cors: {
       origin: "*", 
       methods: ["GET", "POST"]
-    }
+    },
+    path: '/socket.io',
+    // Increase heartbeat intervals to tolerate transient network hiccups
+    pingInterval: 30000,
+    pingTimeout: 120000,
   });
 }
 
 io.on('connection', (socket) => {
-  console.log('New Socket.IO client connected:', socket.id);
-  socket.on('disconnect', () => console.log('Socket.IO client disconnected:', socket.id));
+  console.log('New Socket.IO client connected:', socket.id, 'transport=', socket.conn.transport.name, 'handshake_addr=', socket.handshake.address);
+  console.log('  handshake ua=', socket.handshake.headers && socket.handshake.headers['user-agent']);
+
+  socket.on('disconnect', (reason) => {
+    console.log('Socket.IO client disconnected:', socket.id, 'reason=', reason, 'transport=', socket.conn && socket.conn.transport && socket.conn.transport.name);
+  });
 });
 
 // --- ML API Proxy to ml-service container ---
@@ -434,7 +488,13 @@ app.get('/api/export', async (req, res) => {
     const fields = Object.keys(result.rows[0]);
     res.write(fields.join(',') + '\n');
     result.rows.forEach(row => {
-      res.write(fields.map(field => `"${row[field]instanceof Date ? row[field].toISOString() : (row[field] ?? '')}"`).join(',') + '\n');
+      const line = fields
+        .map(field => {
+          const value = row[field];
+          return `"${value instanceof Date ? value.toISOString() : (value ?? '')}"`;
+        })
+        .join(',');
+      res.write(line + '\n');
     });
     res.end();
   } catch (err) {
@@ -443,20 +503,6 @@ app.get('/api/export', async (req, res) => {
 });
 
 // --- Write Endpoints (PROTECTED) ---
-app.post('/api/devices', authenticateToken, async (req, res) => {
-  const { device_id, name, lat, lng, calibration_coefficients } = req.body;
-  try {
-    const query = `
-      INSERT INTO devices (device_id, name, lat, lng, calibration_coefficients)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING *
-    `;
-    const result = await pool.query(query, [device_id, name, lat, lng, calibration_coefficients || {}]);
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 app.patch('/api/devices/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
@@ -487,6 +533,8 @@ app.post('/api/sim/inject', async (req, res) => {
   const { device_id, pm1_0, pm2_5, pm10, temperature, humidity, rssi_dbm, battery_mv } = req.body;
   
   if (!device_id) return res.status(400).json({ error: 'device_id is required' });
+
+  if (simPaused) return res.status(429).json({ error: 'simulator paused for debugging' });
 
   const payload = JSON.stringify({
     pm1_0, pm2_5, pm10, temperature, humidity, rssi_dbm, battery_mv

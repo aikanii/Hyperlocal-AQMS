@@ -10,5 +10,5 @@ COPY . .
 # Expose FastAPI port
 EXPOSE 8000
 
-# Start FastAPI application with multiple workers for production
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Start FastAPI application with a single worker to avoid duplicate background schedulers
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
