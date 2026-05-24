@@ -76,11 +76,22 @@ const redisClient = redis.createClient({
 redisClient.on('error', (err) => console.log('Redis Client Error', err));
 redisClient.connect().then(() => console.log('Connected to Redis')).catch(console.error);
 
-// MQTT connection
+// MQTT connection with buffer and reliability settings
 const mqttClient = mqtt.connect(process.env.MQTT_URL || 'mqtt://mosquitto:1883', {
   username: process.env.MQTT_USERNAME || 'mydevice',
   password: process.env.MQTT_PASSWORD || 'mypassword',
-  clientId: 'aqms_backend_' + Math.random().toString(16).slice(2, 8)
+  clientId: 'aqms_backend_' + Math.random().toString(16).slice(2, 8),
+  // Buffer/reliability settings
+  reconnectPeriod: 1000,        // Reconnect every 1 second
+  connectTimeout: 30 * 1000,    // 30 second timeout for connection
+  keepalive: 60,                // Send keep-alive every 60 seconds
+  clean: false,                 // Resume session if available
+  will: {
+    topic: 'aqms/backend/status',
+    payload: JSON.stringify({ status: 'offline', timestamp: new Date() }),
+    qos: 1,
+    retain: true
+  }
 });
 
 // --- Middleware & Routes ---
@@ -119,15 +130,32 @@ function initServer(server) {
     // Increase heartbeat intervals to tolerate transient network hiccups
     pingInterval: 30000,
     pingTimeout: 120000,
+    // Max reconnection attempts on server side
+    maxHttpBufferSize: 1e6, // 1 MB
+    // Compression
+    transports: ['websocket', 'polling'],
   });
 }
 
 io.on('connection', (socket) => {
-  console.log('New Socket.IO client connected:', socket.id, 'transport=', socket.conn.transport.name, 'handshake_addr=', socket.handshake.address);
-  console.log('  handshake ua=', socket.handshake.headers && socket.handshake.headers['user-agent']);
+  console.log('[SOCKET] Client connected:', socket.id, 'transport:', socket.conn.transport.name, 'from:', socket.handshake.address);
+  console.log('[SOCKET] User-Agent:', socket.handshake.headers && socket.handshake.headers['user-agent']);
 
   socket.on('disconnect', (reason) => {
-    console.log('Socket.IO client disconnected:', socket.id, 'reason=', reason, 'transport=', socket.conn && socket.conn.transport && socket.conn.transport.name);
+    const reasonDesc = {
+      'client namespace disconnect': 'Client intentionally disconnected',
+      'server namespace disconnect': 'Server disconnected client',
+      'server shutting down': 'Server is shutting down',
+      'ping timeout': 'No ping response (client may be offline)',
+      'transport close': 'Network connection lost',
+      'transport error': 'Network transport error occurred',
+    };
+    const desc = reasonDesc[reason] || reason;
+    console.log('[SOCKET] Client disconnected:', socket.id, '| Reason:', reason, `(${desc})`);
+  });
+
+  socket.on('error', (error) => {
+    console.error('[SOCKET] Error on client:', socket.id, '| Error:', error);
   });
 });
 
@@ -170,11 +198,30 @@ function authenticateToken(req, res, next) {
 
 // --- MQTT logic ---
 mqttClient.on('connect', () => {
-  console.log('Connected to MQTT Broker');
+  console.log('[MQTT] ✓ Connected to broker');
   mqttClient.subscribe('aqms/indoor/+/data', (err) => {
-    if (!err) console.log('Subscribed to aqms/indoor/+/data');
-    else console.error('MQTT Subscription Error:', err);
+    if (!err) {
+      console.log('[MQTT] ✓ Subscribed to aqms/indoor/+/data');
+    } else {
+      console.error('[MQTT] ✗ Subscription error:', err.message);
+    }
   });
+});
+
+mqttClient.on('error', (err) => {
+  console.error('[MQTT] ✗ Connection error:', err.message);
+});
+
+mqttClient.on('offline', () => {
+  console.warn('[MQTT] ⚠ Offline - attempting to reconnect...');
+});
+
+mqttClient.on('reconnect', () => {
+  console.log('[MQTT] ⟳ Reconnecting...');
+});
+
+mqttClient.on('close', () => {
+  console.error('[MQTT] ✗ Connection closed');
 });
 
 mqttClient.on('message', async (topic, message) => {
@@ -191,20 +238,20 @@ mqttClient.on('message', async (topic, message) => {
     const rssi = payload.rssi_dbm !== undefined ? Number(payload.rssi_dbm) : null;
     const battery = payload.battery_mv !== undefined ? Number(payload.battery_mv) : null;
 
+    // Fetch and apply calibration coefficients
     let pm2_5_cal = pm2_5;
-    
     try {
-        const deviceRes = await pool.query('SELECT calibration_coefficients FROM devices WHERE device_id = $1', [deviceId]);
-        if (deviceRes.rows.length > 0 && deviceRes.rows[0].calibration_coefficients) {
-            const coeffs = deviceRes.rows[0].calibration_coefficients;
-            const slope = Number(coeffs.pm2_5_slope) || 1.0;
-            const intercept = Number(coeffs.pm2_5_intercept) || 0.0;
-            if (pm2_5 !== null) {
-                pm2_5_cal = (pm2_5 * slope) + intercept;
-            }
+      const deviceRes = await pool.query('SELECT calibration_coefficients FROM devices WHERE device_id = $1', [deviceId]);
+      if (deviceRes.rows.length > 0 && deviceRes.rows[0].calibration_coefficients) {
+        const coeffs = deviceRes.rows[0].calibration_coefficients;
+        const slope = Number(coeffs.pm2_5_slope) || 1.0;
+        const intercept = Number(coeffs.pm2_5_intercept) || 0.0;
+        if (pm2_5 !== null) {
+          pm2_5_cal = (pm2_5 * slope) + intercept;
         }
-    } catch (dbErr) {
-        console.error('Failed to fetch calibration config:', dbErr.message);
+      }
+    } catch (calibErr) {
+      console.debug(`[CAL:${deviceId}] ℹ Using raw PM2.5 (no calibration found):`, calibErr.message);
     }
 
     const timestamp = new Date();
@@ -220,35 +267,35 @@ mqttClient.on('message', async (topic, message) => {
       rssi, battery
     ];
     
-    await pool.query(query, values);
+    try {
+      await pool.query(query, values);
+      console.log(`[DB:${deviceId}] ✓ Reading inserted`);
+    } catch (dbErr) {
+      console.error(`[DB:${deviceId}] ✗ Insert failed:`, dbErr.message);
+      // Don't re-throw - log and continue so socket broadcast and cache still happen
+    }
     
-    const wsPayload = JSON.stringify({
-      event: 'new_reading',
-      data: {
-        time: timestamp, device_id: deviceId,
-        pm1_0: payload.pm1_0, pm2_5: payload.pm2_5, pm10: payload.pm10,
-        pm2_5_cal: pm2_5_cal, temperature: payload.temperature,
-        humidity: payload.humidity, rssi_dbm: payload.rssi_dbm, battery_mv: payload.battery_mv
-      }
-    });
-
-    // Broadcast via Socket.IO
-    io.emit('new_reading', {
+    // Broadcast via Socket.IO with error handling
+    const readingData = {
       time: timestamp, device_id: deviceId,
       pm1_0: payload.pm1_0, pm2_5: payload.pm2_5, pm10: payload.pm10,
       pm2_5_cal: pm2_5_cal, temperature: payload.temperature,
       humidity: payload.humidity, rssi_dbm: payload.rssi_dbm, battery_mv: payload.battery_mv
-    });
+    };
+    
+    if (io.engine.clientsCount > 0) {
+      io.emit('new_reading', readingData);
+      console.log(`[SOCKET] ✓ Broadcasted to ${io.engine.clientsCount} client(s)`);
+    } else {
+      console.debug(`[SOCKET] ℹ No connected clients to broadcast to`);
+    }
 
     try {
-      await redisClient.set(`device:latest:${deviceId}`, JSON.stringify({
-        time: timestamp, device_id: deviceId,
-        pm1_0: payload.pm1_0, pm2_5: payload.pm2_5, pm10: payload.pm10,
-        pm2_5_cal: pm2_5_cal, temperature: payload.temperature,
-        humidity: payload.humidity, rssi_dbm: payload.rssi_dbm, battery_mv: payload.battery_mv
-      }));
+      await redisClient.set(`device:latest:${deviceId}`, JSON.stringify(readingData), { EX: 3600 });
+      console.log(`[CACHE:${deviceId}] ✓ Cached in Redis (1h TTL)`);
     } catch (redisErr) {
-      console.error('Redis caching error:', redisErr.message);
+      console.error(`[CACHE:${deviceId}] ✗ Redis cache failed:`, redisErr.message);
+      // Don't stop processing - cache is optional
     }
 
     // Trigger ML prediction asynchronously and broadcast
@@ -275,9 +322,9 @@ mqttClient.on('message', async (topic, message) => {
       }
     })();
 
-    console.log(`[${deviceId}] Data inserted, cached, and broadcasted.`);
+    console.log(`[MQTT:${deviceId}] ✓ Data processed and broadcasted`);
   } catch (err) {
-    console.error('Error processing message:', err.message);
+    console.error(`[MQTT] ✗ Error processing message:`, err.message);
   }
 });
 
@@ -532,9 +579,15 @@ app.patch('/api/devices/:id', authenticateToken, async (req, res) => {
 app.post('/api/sim/inject', async (req, res) => {
   const { device_id, pm1_0, pm2_5, pm10, temperature, humidity, rssi_dbm, battery_mv } = req.body;
   
-  if (!device_id) return res.status(400).json({ error: 'device_id is required' });
+  if (!device_id) {
+    console.error('[INJECT] ✗ Missing device_id');
+    return res.status(400).json({ error: 'device_id is required' });
+  }
 
-  if (simPaused) return res.status(429).json({ error: 'simulator paused for debugging' });
+  if (simPaused) {
+    console.warn('[INJECT] ⚠ Simulator paused');
+    return res.status(429).json({ error: 'simulator paused for debugging' });
+  }
 
   const payload = JSON.stringify({
     pm1_0, pm2_5, pm10, temperature, humidity, rssi_dbm, battery_mv
@@ -542,9 +595,19 @@ app.post('/api/sim/inject', async (req, res) => {
 
   const topic = `aqms/indoor/${device_id}/data`;
   
-  mqttClient.publish(topic, payload, (err) => {
-    if (err) return res.status(500).json({ error: 'MQTT publish failed' });
-    res.json({ status: 'published', topic, payload: JSON.parse(payload) });
+  // Use promise wrapper for MQTT publish to handle async publishing
+  mqttClient.publish(topic, payload, { qos: 1, retain: false }, (err) => {
+    if (err) {
+      console.error(`[INJECT:${device_id}] ✗ Publish failed:`, err.message);
+      return res.status(500).json({ error: 'MQTT publish failed', details: err.message });
+    }
+    console.log(`[INJECT:${device_id}] ✓ Published to ${topic}`);
+    res.json({ 
+      status: 'published', 
+      topic, 
+      device_id,
+      payload: JSON.parse(payload) 
+    });
   });
 });
 

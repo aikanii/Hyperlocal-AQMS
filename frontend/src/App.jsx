@@ -243,7 +243,16 @@ const AppInner = () => {
     socket.on('disconnect', (reason) => {
       setSocketStatus('disconnected');
       setSocketError(reason);
-      console.warn('[HY-AQMS] Socket disconnected:', reason);
+      console.warn('[HY-AQMS] Socket disconnected - Reason:', reason);
+      
+      // Distinguish between intentional and unintentional disconnects
+      if (reason === 'client namespace disconnect') {
+        console.debug('[HY-AQMS] Client-initiated disconnect (normal)');
+      } else if (reason.includes('transport')) {
+        console.warn('[HY-AQMS] Network transport error - will auto-reconnect');
+      } else if (reason.includes('timeout')) {
+        console.warn('[HY-AQMS] Connection timeout - will auto-reconnect');
+      }
     });
 
     socket.on('connect_error', (error) => {
@@ -262,6 +271,20 @@ const AppInner = () => {
       setSocketStatus('connected');
       setSocketError(null);
       console.info('[HY-AQMS] Socket reconnected after', attempt, 'attempt(s)');
+      
+      // Fetch fresh data after reconnection to catch any missed updates
+      (async () => {
+        try {
+          console.debug('[HY-AQMS] Refreshing data after reconnect...');
+          const readingsRes = await axios.get('/api/readings/latest');
+          if (Array.isArray(readingsRes.data)) {
+            setReadings(readingsRes.data);
+            console.debug('[HY-AQMS] Data refreshed after reconnect', readingsRes.data.length, 'readings');
+          }
+        } catch (err) {
+          console.error('[HY-AQMS] Failed to refresh data after reconnect:', err.message);
+        }
+      })();
     });
 
     socket.on('new_reading', (payload) => {
@@ -276,7 +299,37 @@ const AppInner = () => {
       });
     });
 
-    return () => socket.disconnect();
+    // Store socket in ref to prevent stale closures
+    const socketRef = { current: socket };
+
+    // Fallback polling - fetch latest data every 15 seconds if socket is not connected
+    const pollInterval = setInterval(async () => {
+      if (socket.connected) {
+        // Socket is connected, no need to poll
+        return;
+      }
+      
+      try {
+        console.debug('[HY-AQMS] Polling for latest data (socket disconnected)');
+        const readingsRes = await axios.get('/api/readings/latest');
+        if (Array.isArray(readingsRes.data) && readingsRes.data.length > 0) {
+          setReadings(readingsRes.data);
+          console.debug('[HY-AQMS] Polling refreshed', readingsRes.data.length, 'readings');
+        }
+      } catch (err) {
+        console.debug('[HY-AQMS] Polling failed:', err.message);
+      }
+    }, 15000);
+
+    // Only disconnect on actual unmount or when switching API URLs
+    return () => {
+      console.debug('[HY-AQMS] Cleaning up socket connection');
+      clearInterval(pollInterval);
+      // Properly close the socket
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+    };
   }, []);
 
   const handleRegionSelect = (region) => {

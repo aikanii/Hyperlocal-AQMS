@@ -193,7 +193,9 @@ const Simulation = () => {
           });
           addLog(`AUTO → ${res.data.topic}`, 'success');
         } catch (err) {
-          addLog(`AUTO ERR [${device.device_id}]: ${err.message}`, 'error');
+          const errMsg = err.response?.data?.error || err.message || 'Unknown error';
+          addLog(`AUTO ERR [${device.device_id}]: ${errMsg}`, 'error');
+          console.error(`[Simulation] Auto-pilot error:`, err);
         }
       });
     };
@@ -262,11 +264,13 @@ const Simulation = () => {
           }));
           addLog(`▶ ${device.name || device_id} → ${res.data.topic}`, 'success');
         } catch (err) {
+          const errMsg = err.response?.data?.error || err.message || 'Unknown error';
           setSensorStats(prev => ({
             ...prev,
-            [device_id]: { ...prev[device_id], error: err.message },
+            [device_id]: { ...prev[device_id], error: errMsg },
           }));
-          addLog(`✗ ${device.name || device_id}: ${err.message}`, 'error');
+          addLog(`✗ ${device.name || device_id}: ${errMsg}`, 'error');
+          console.error(`[Simulation] Inject error for ${device_id}:`, err);
         }
       };
 
@@ -285,9 +289,12 @@ const Simulation = () => {
   const handleSimulate = async () => {
     try {
       const res = await axios.post('/api/sim/inject', { device_id: deviceId, ...payload });
-      addLog(`PUBLISHED → ${res.data.topic}`, 'success');
+      addLog(`PUBLISHED → ${res.data.topic} [${res.data.device_id}]`, 'success');
+      console.debug('[Simulation] Manual inject response:', res.data);
     } catch (err) {
-      addLog(`ERR: ${err.response?.data?.error || err.message}`, 'error');
+      const errMsg = err.response?.data?.error || err.message || 'Unknown error';
+      addLog(`ERR: ${errMsg}`, 'error');
+      console.error('[Simulation] Manual inject failed:', err);
     }
   };
 
