@@ -194,8 +194,12 @@ const Simulation = () => {
           addLog(`AUTO → ${res.data.topic}`, 'success');
         } catch (err) {
           const errMsg = err.response?.data?.error || err.message || 'Unknown error';
-          addLog(`AUTO ERR [${device.device_id}]: ${errMsg}`, 'error');
-          console.error(`[Simulation] Auto-pilot error:`, err);
+          const statusCode = err.response?.status;
+          const displayMsg = statusCode === 429 
+            ? `${errMsg} (Rate limited - reduce cadence)`
+            : errMsg;
+          addLog(`AUTO ERR [${device.device_id}]: ${displayMsg}`, 'error');
+          console.error(`[Simulation] Auto-pilot error (${statusCode}):`, err);
         }
       });
     };
@@ -265,12 +269,16 @@ const Simulation = () => {
           addLog(`▶ ${device.name || device_id} → ${res.data.topic}`, 'success');
         } catch (err) {
           const errMsg = err.response?.data?.error || err.message || 'Unknown error';
+          const statusCode = err.response?.status;
+          const displayMsg = statusCode === 429 
+            ? `${errMsg} (Rate limited - reduce cadence)`
+            : errMsg;
           setSensorStats(prev => ({
             ...prev,
-            [device_id]: { ...prev[device_id], error: errMsg },
+            [device_id]: { ...prev[device_id], error: displayMsg },
           }));
-          addLog(`✗ ${device.name || device_id}: ${errMsg}`, 'error');
-          console.error(`[Simulation] Inject error for ${device_id}:`, err);
+          addLog(`✗ ${device.name || device_id}: ${displayMsg}`, 'error');
+          console.error(`[Simulation] Inject error for ${device_id} (${statusCode}):`, err);
         }
       };
 
@@ -293,8 +301,12 @@ const Simulation = () => {
       console.debug('[Simulation] Manual inject response:', res.data);
     } catch (err) {
       const errMsg = err.response?.data?.error || err.message || 'Unknown error';
-      addLog(`ERR: ${errMsg}`, 'error');
-      console.error('[Simulation] Manual inject failed:', err);
+      const statusCode = err.response?.status;
+      const displayMsg = statusCode === 429 
+        ? `${errMsg} (Rate limited - reduce cadence)`
+        : errMsg;
+      addLog(`ERR: ${displayMsg}`, 'error');
+      console.error('[Simulation] Manual inject failed (${statusCode}):', err);
     }
   };
 

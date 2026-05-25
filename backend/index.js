@@ -22,13 +22,27 @@ app.use(compression());
 app.use(cors());
 app.use(express.json());
 
-// Rate Limiting: 100 requests per 15 minutes
+// Rate Limiting: 100 requests per 15 minutes for general API
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    // Skip rate limiting for simulation endpoints (admin-only)
+    return req.path.startsWith('/api/sim/');
+  }
 });
+
+// Simulation limiter: much higher limit (1000 per 15 minutes) for auto-pilot testing
+const simLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Simulation rate limit exceeded. Please wait before sending more injections.',
+});
+
 app.use('/api/', limiter);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'aqms_super_secret_key';
@@ -102,11 +116,11 @@ const io = new Server();
 let simPaused = false;
 
 // Endpoint to view and toggle simulator pause state (useful for debugging)
-app.get('/api/sim/paused', (req, res) => {
+app.get('/api/sim/paused', simLimiter, (req, res) => {
   res.json({ paused: !!simPaused });
 });
 
-app.post('/api/sim/pause', (req, res) => {
+app.post('/api/sim/pause', simLimiter, (req, res) => {
   try {
     const body = req.body || {};
     if (typeof body.pause === 'boolean') {
@@ -576,7 +590,7 @@ app.patch('/api/devices/:id', authenticateToken, async (req, res) => {
   }
 });
 // --- Injection Endpoint (Simulate Sensor Payload) ---
-app.post('/api/sim/inject', async (req, res) => {
+app.post('/api/sim/inject', simLimiter, async (req, res) => {
   const { device_id, pm1_0, pm2_5, pm10, temperature, humidity, rssi_dbm, battery_mv } = req.body;
   
   if (!device_id) {
