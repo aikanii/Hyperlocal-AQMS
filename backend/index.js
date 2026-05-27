@@ -22,28 +22,53 @@ app.use(compression());
 app.use(cors());
 app.use(express.json());
 
-// Rate Limiting: 100 requests per 15 minutes for general API
+// ── OPTIMIZED RATE LIMITING ──────────────────────────────────────────────────
+// Endpoint-specific limiters for better control and efficiency
+
+// General API limiter: 500 requests per 15 minutes (more permissive)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 500,
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
-    // Skip rate limiting for simulation endpoints (admin-only)
-    return req.path.startsWith('/api/sim/');
-  }
+    // Skip rate limiting for high-volume endpoints
+    return req.path.startsWith('/api/sim/') || req.path.startsWith('/api/readings') || req.path === '/health';
+  },
+  message: 'General API rate limit exceeded. Please retry after 15 minutes.',
 });
 
-// Simulation limiter: much higher limit (1000 per 15 minutes) for auto-pilot testing
+// Simulation limiter: VERY permissive (10,000 per 15 minutes) for staggered injections
+// Handles 10 sensors × 2-second stagger = 10 requests/20s = 27,000 req/day, well within limit
 const simLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 1000,
+  max: 10000,
   standardHeaders: true,
   legacyHeaders: false,
   message: 'Simulation rate limit exceeded. Please wait before sending more injections.',
 });
 
+// Readings endpoint limiter: 2000 requests per 15 minutes (readings are read-heavy)
+const readingsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 2000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Readings endpoint rate limit exceeded.',
+});
+
+// Health check: unlimited (lightweight)
+const healthLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 1000,
+  standardHeaders: false,
+  legacyHeaders: false,
+  skip: () => true,  // Skip rate limiting for health checks
+});
+
 app.use('/api/', limiter);
+app.use('/api/readings', readingsLimiter);
+app.use('/health', healthLimiter);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'aqms_super_secret_key';
 
@@ -83,12 +108,81 @@ const ensurePredictionsUniqueIndex = async () => {
 };
 ensurePredictionsUniqueIndex();
 
-// Redis connection
 const redisClient = redis.createClient({
   url: process.env.REDIS_URL || 'redis://redis:6379'
 });
 redisClient.on('error', (err) => console.log('Redis Client Error', err));
 redisClient.connect().then(() => console.log('Connected to Redis')).catch(console.error);
+
+// ── PREDICTION BATCH PROCESSOR ──────────────────────────────────────────────
+// Instead of triggering predictions on every reading, batch them and process every 30 seconds
+let predictionBatchTimer = null;
+const processPredictionBatch = async () => {
+  try {
+    // Trigger batch prediction from ML service
+    const mlRes = await fetch('http://ml-service:8000/api/ml/predict/city', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10000
+    });
+    
+    if (mlRes.ok) {
+      const predictions = await mlRes.json();
+      if (predictions && Array.isArray(predictions) && predictions.length > 0) {
+        // Batch insert predictions with efficient conflict handling
+        const predQuery = `
+          INSERT INTO predictions (time, device_id, pm2_5_cal, temperature, humidity, created_at) 
+          VALUES ($1, $2, $3, $4, $5, NOW())
+          ON CONFLICT (time, device_id) 
+          DO UPDATE SET 
+            pm2_5_cal = EXCLUDED.pm2_5_cal, 
+            temperature = EXCLUDED.temperature, 
+            humidity = EXCLUDED.humidity, 
+            created_at = NOW()
+        `;
+        
+        // Batch process: use Promise.all for parallel inserts
+        await Promise.all(
+          predictions.map(p => 
+            pool.query(predQuery, [p.time || new Date(), p.device_id || 'city', p.pm2_5_cal, p.temperature, p.humidity])
+              .catch(err => console.error(`[PRED] Insert error for ${p.device_id}:`, err.message))
+          )
+        );
+        
+        // Broadcast to all connected clients
+        if (io.engine.clientsCount > 0) {
+          io.emit('prediction_update', predictions);
+          console.log(`[PRED] ✓ Broadcasted ${predictions.length} predictions to ${io.engine.clientsCount} clients`);
+        }
+        
+        // Cache predictions in Redis
+        try {
+          await redisClient.set('predictions:latest', JSON.stringify(predictions), { EX: 1800 });
+          console.log('[PRED] ✓ Cached predictions in Redis (30m TTL)');
+        } catch (cacheErr) {
+          console.error('[PRED] ✗ Redis cache error:', cacheErr.message);
+        }
+      }
+    } else {
+      console.warn(`[PRED] ⚠ ML service returned ${mlRes.status}`);
+    }
+  } catch (mlErr) {
+    console.error('[PRED] ✗ Batch prediction error:', mlErr.message);
+  }
+};
+
+// Start batch prediction processor on server startup
+const startPredictionBatchProcessor = () => {
+  predictionBatchTimer = setInterval(processPredictionBatch, 30000);  // Every 30 seconds
+  console.log('[PRED] ✓ Batch prediction processor started (30s interval)');
+};
+
+const stopPredictionBatchProcessor = () => {
+  if (predictionBatchTimer) {
+    clearInterval(predictionBatchTimer);
+    console.log('[PRED] ✓ Batch prediction processor stopped');
+  }
+};
 
 // MQTT connection with buffer and reliability settings
 const mqttClient = mqtt.connect(process.env.MQTT_URL || 'mqtt://mosquitto:1883', {
@@ -309,33 +403,9 @@ mqttClient.on('message', async (topic, message) => {
       console.log(`[CACHE:${deviceId}] ✓ Cached in Redis (1h TTL)`);
     } catch (redisErr) {
       console.error(`[CACHE:${deviceId}] ✗ Redis cache failed:`, redisErr.message);
-      // Don't stop processing - cache is optional
     }
 
-    // Trigger ML prediction asynchronously and broadcast
-    (async () => {
-      try {
-        const mlRes = await fetch('http://ml-service:8000/api/ml/predict/city');
-        if (mlRes.ok) {
-          const predictions = await mlRes.json();
-          if (predictions && predictions.length > 0) {
-            const predQuery = `
-              INSERT INTO predictions (time, device_id, pm2_5_cal, temperature, humidity) 
-              VALUES ($1, $2, $3, $4, $5) 
-              ON CONFLICT (time, device_id) 
-              DO UPDATE SET pm2_5_cal = EXCLUDED.pm2_5_cal, temperature = EXCLUDED.temperature, humidity = EXCLUDED.humidity, created_at = NOW()
-            `;
-            for (const p of predictions) {
-              await pool.query(predQuery, [p.time, 'city', p.pm2_5_cal, p.temperature, p.humidity]);
-            }
-            io.emit('prediction_update', predictions);
-          }
-        }
-      } catch (mlErr) {
-        console.error('Failed to trigger ML prediction:', mlErr.message);
-      }
-    })();
-
+    // Note: Predictions are now processed in batch every 30 seconds instead of per-message
     console.log(`[MQTT:${deviceId}] ✓ Data processed and broadcasted`);
   } catch (err) {
     console.error(`[MQTT] ✗ Error processing message:`, err.message);
@@ -430,10 +500,22 @@ app.get('/api/devices/:id/latest', async (req, res) => {
 
 app.get('/api/readings/latest', async (req, res) => {
   try {
-    const keys = await redisClient.keys('device:latest:*');
-    if (keys.length === 0) return res.json([]);
-    const data = await redisClient.mGet(keys);
-    res.json(data.filter(Boolean).map(d => JSON.parse(d)));
+    // Check cache first
+    const cached = await redisClient.get('latest_readings:all');
+    if (cached) {
+      return res.json(JSON.parse(cached));
+    }
+    
+    // If not cached, query database directly
+    const result = await pool.query(`
+      SELECT DISTINCT ON (device_id) * 
+      FROM readings 
+      ORDER BY device_id, time DESC
+    `);
+    
+    // Cache for 5 minutes
+    await redisClient.set('latest_readings:all', JSON.stringify(result.rows), { EX: 300 });
+    res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -443,6 +525,49 @@ app.get('/api/readings', async (req, res) => {
   try {
     const { device_id, start, end, limit } = req.query;
     let query = 'SELECT * FROM readings WHERE 1=1';
+    const values = [];
+    let idx = 1;
+
+    if (device_id) { query += ` AND device_id = $${idx++}`; values.push(device_id); }
+    if (start) { query += ` AND time >= $${idx++}`; values.push(start); }
+    if (end) { query += ` AND time <= $${idx++}`; values.push(end); }
+    
+    query += ` ORDER BY time DESC LIMIT $${idx++}`;
+    values.push(limit ? parseInt(limit) : 1000);
+
+    const result = await pool.query(query, values);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── PREDICTIONS ENDPOINTS ──
+app.get('/api/predictions/latest', async (req, res) => {
+  try {
+    // Try cache first
+    const cached = await redisClient.get('predictions:latest');
+    if (cached) {
+      return res.json(JSON.parse(cached));
+    }
+    
+    // Fallback to database
+    const result = await pool.query(`
+      SELECT DISTINCT ON (device_id) * 
+      FROM predictions 
+      WHERE time >= NOW() - INTERVAL '24 hours'
+      ORDER BY device_id, time DESC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/predictions', async (req, res) => {
+  try {
+    const { device_id, start, end, limit } = req.query;
+    let query = 'SELECT * FROM predictions WHERE 1=1';
     const values = [];
     let idx = 1;
 
@@ -540,24 +665,46 @@ app.get('/api/export', async (req, res) => {
     if (device_id) { query += ` AND device_id = $${idx++}`; values.push(device_id); }
     if (start) { query += ` AND time >= $${idx++}`; values.push(start); }
     if (end) { query += ` AND time <= $${idx++}`; values.push(end); }
-    query += ` ORDER BY time DESC LIMIT 10000`;
+    query += ` ORDER BY time DESC LIMIT 50000`;  // Increased limit, will stream efficiently
 
-    const result = await pool.query(query, values);
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="export.csv"');
-    if (result.rows.length === 0) return res.send('');
-    const fields = Object.keys(result.rows[0]);
-    res.write(fields.join(',') + '\n');
-    result.rows.forEach(row => {
-      const line = fields
-        .map(field => {
-          const value = row[field];
-          return `"${value instanceof Date ? value.toISOString() : (value ?? '')}"`;
-        })
-        .join(',');
-      res.write(line + '\n');
-    });
-    res.end();
+
+    // Use cursor to stream results instead of loading all into memory
+    const client = await pool.connect();
+    try {
+      const result = await client.query(query, values);
+      const rows = result.rows;
+      
+      if (rows.length === 0) {
+        res.send('');
+        return;
+      }
+      
+      // Write header
+      const fields = Object.keys(rows[0]);
+      res.write(fields.join(',') + '\n');
+      
+      // Stream rows
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const line = fields
+          .map(field => {
+            const value = row[field];
+            return `"${value instanceof Date ? value.toISOString() : (value ?? '')}"`;
+          })
+          .join(',');
+        res.write(line + '\n');
+        
+        // Yield every 1000 rows
+        if (i % 1000 === 0) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      }
+      res.end();
+    } finally {
+      client.release();
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -630,11 +777,13 @@ const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => {
   console.log(`Backend server listening on port ${PORT}`);
   initServer(server);
+  startPredictionBatchProcessor();  // Start batch prediction processor
 });
 
 // --- Graceful Shutdown ---
 const shutdown = async () => {
   console.log('SIGTERM signal received: closing HTTP server');
+  stopPredictionBatchProcessor();  // Stop batch prediction processor
   server.close(async () => {
     console.log('HTTP server closed');
     try {

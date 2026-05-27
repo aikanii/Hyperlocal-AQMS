@@ -177,30 +177,34 @@ const Simulation = () => {
     if (!isAutoPilot || devices.length === 0) return;
 
     const injectAll = () => {
-      devices.forEach(async (device) => {
-        try {
-          const p = payloadRef.current;
-          const vary = (base, d) => Number((base + (Math.random() * d * 2 - d)).toFixed(2));
-          const res = await axios.post('/api/sim/inject', {
-            device_id:   device.device_id,
-            pm1_0:       Math.max(0, vary(p.pm1_0, 2)),
-            pm2_5:       Math.max(0, vary(p.pm2_5, 5)),
-            pm10:        Math.max(0, vary(p.pm10, 8)),
-            temperature: vary(p.temperature, 0.8),
-            humidity:    Math.min(100, Math.max(0, vary(p.humidity, 3))),
-            rssi_dbm:    Math.floor(vary(p.rssi_dbm, 4)),
-            battery_mv:  Math.floor(vary(p.battery_mv, 30)),
-          });
-          addLog(`AUTO → ${res.data.topic}`, 'success');
-        } catch (err) {
-          const errMsg = err.response?.data?.error || err.message || 'Unknown error';
-          const statusCode = err.response?.status;
-          const displayMsg = statusCode === 429 
-            ? `${errMsg} (Rate limited - reduce cadence)`
-            : errMsg;
-          addLog(`AUTO ERR [${device.device_id}]: ${displayMsg}`, 'error');
-          console.error(`[Simulation] Auto-pilot error (${statusCode}):`, err);
-        }
+      // Stagger requests by 1 second per location to prevent burst limits
+      devices.forEach((device, index) => {
+        setTimeout(async () => {
+          try {
+            const p = payloadRef.current;
+            const vary = (base, d) => Number((base + (Math.random() * d * 2 - d)).toFixed(2));
+            const res = await axios.post('/api/sim/inject', {
+              device_id:   device.device_id,
+              pm1_0:       Math.max(0, vary(p.pm1_0, 2)),
+              pm2_5:       Math.max(0, vary(p.pm2_5, 5)),
+              pm10:        Math.max(0, vary(p.pm10, 8)),
+              temperature: vary(p.temperature, 0.8),
+              humidity:    Math.min(100, Math.max(0, vary(p.humidity, 3))),
+              rssi_dbm:    Math.floor(vary(p.rssi_dbm, 4)),
+              battery_mv:  Math.floor(vary(p.battery_mv, 30)),
+            });
+            addLog(`AUTO → ${res.data.topic}`, 'success');
+          } catch (err) {
+            const errMsg = err.response?.data?.error || err.message || 'Unknown error';
+            const statusCode = err.response?.status;
+            const displayMsg = statusCode === 429 
+              ? `${errMsg} (Rate limited - reduce cadence)`
+              : errMsg;
+            addLog(`AUTO ERR [${device.device_id}]: ${displayMsg}`, 'error');
+            console.error(`[Simulation] Auto-pilot error (${statusCode}):`, err);
+          }
+        }, index * 2000); 
+        // Device 0 fires at 0s, Device 1 at 2s, Device 2 at 4s, etc. (18-second total spread)
       });
     };
 
@@ -290,7 +294,14 @@ const Simulation = () => {
     }
   };
 
-  const enableAll  = () => devices.forEach(d => { if (!sensorEnabled[d.device_id]) toggleSensor(d); });
+  const enableAll  = () => {
+    // Stagger sensor activation by 2 seconds per device to prevent burst limits
+    devices.forEach((d, index) => {
+      if (!sensorEnabled[d.device_id]) {
+        setTimeout(() => toggleSensor(d), index * 2000);
+      }
+    });
+  };
   const disableAll = () => devices.forEach(d => { if (sensorEnabled[d.device_id])  toggleSensor(d); });
 
   // ── Manual single inject ─────────────────────────────────────────────────────

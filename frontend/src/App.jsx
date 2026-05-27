@@ -42,13 +42,12 @@ const AccessNotification = ({ message, type }) => {
 };
 
 // ---------------------------------------------------------------------------
-// LoginSection — reads/writes auth via context
+// LoginSection — reads/writes auth via context, hidden by default
 // ---------------------------------------------------------------------------
-const LoginSection = ({ setShowSplash, setNotify }) => {
+const LoginSection = ({ setShowSplash, setNotify, showLoginPanel, setShowLoginPanel }) => {
   const { isLoggedIn, isAdmin, username, login, logout } = useAuth();
   const [credentials, setCredentials] = useState({ username: '', password: '' });
   const [loading, setLoading] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(false);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -63,6 +62,7 @@ const LoginSection = ({ setShowSplash, setNotify }) => {
         login(res.data.token);
         setCredentials({ username: '', password: '' });
         setShowSplash(false);
+        setShowLoginPanel(false);  // Hide panel after successful login
         setNotify({ type: 'login', message: 'Administrator Session Established' });
         setTimeout(() => setNotify(null), 4000);
       }, 5000);
@@ -79,6 +79,7 @@ const LoginSection = ({ setShowSplash, setNotify }) => {
 
   const handleLogout = () => {
     logout();
+    setShowLoginPanel(false);  // Hide panel on logout
     setNotify({ type: 'logout', message: 'Returned to General Public View' });
     setTimeout(() => setNotify(null), 4000);
   };
@@ -110,17 +111,22 @@ const LoginSection = ({ setShowSplash, setNotify }) => {
     );
   }
 
+  // Only show login panel if showLoginPanel is true (toggled by logo click)
+  if (!showLoginPanel) {
+    return null;
+  }
+
   return (
     <div style={{ padding: '1rem', margin: '0 1rem 1rem 1rem', background: 'var(--overlay-bg)', borderRadius: '12px' }}>
       <button 
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={() => setShowLoginPanel(false)}
         style={{ width: '100%', background: 'transparent', border: '1px solid rgba(2, 239, 240, 0.3)', color: 'var(--accent)', padding: '0.6rem', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.8rem' }}
       >
-        <span>{isExpanded ? '✖ CANCEL' : '🔑 ADMIN LOGIN'}</span>
+        <span>✖ CLOSE</span>
       </button>
 
-      <div className={`login-expand-container ${isExpanded ? 'expanded' : ''}`}>
-        <p style={{ margin: '0 0 0.8rem 0', fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: '600' }}>RESTRICTED ACCESS</p>
+      <div style={{ display: 'block' }}>
+        <p style={{ margin: '1rem 0 0.8rem 0', fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: '600' }}>RESTRICTED ACCESS</p>
         <form onSubmit={handleLogin}>
           <input
             placeholder="Username"
@@ -156,6 +162,7 @@ const AppInner = () => {
   const { isAdmin } = useAuth();
   const [activeTab, setActiveTab] = useState('map');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [showLoginPanel, setShowLoginPanel] = useState(false);  // Hidden by default, toggle with logo click
 
   const [readings, setReadings] = useState([]);
   const [devices, setDevices] = useState([]);
@@ -386,8 +393,8 @@ const AppInner = () => {
       <div className="app-container" style={{ display: 'flex', height: '100vh', width: '100vw', background: 'transparent', overflow: 'hidden', position: 'relative' }}>
       {/* Sidebar */}
       <aside className={`sidebar glass-panel ${isMobileSidebarOpen ? 'open' : ''}`} style={{ width: '280px', border: 'none', borderRadius: '0', borderRight: '1px solid var(--border)', boxShadow: '5px 0 30px var(--shadow)', zIndex: 10, display: 'flex', flexDirection: 'column', background: 'var(--panel)' }}>
-        <div style={{ padding: '2.5rem 2rem', borderBottom: '1px solid var(--border)', textAlign: 'center' }}>
-          <h2 style={{ margin: 0, color: 'var(--accent)', fontSize: '1.6rem', fontWeight: '800', letterSpacing: '1px', textShadow: '0 0 10px rgba(2, 239, 240, 0.5)' }}>HY-AQMS</h2>
+        <div style={{ padding: '2.5rem 2rem', borderBottom: '1px solid var(--border)', textAlign: 'center', cursor: 'pointer', transition: 'all 0.3s ease' }} onClick={() => setShowLoginPanel(!showLoginPanel)}>
+          <h2 style={{ margin: 0, color: 'var(--accent)', fontSize: '1.6rem', fontWeight: '800', letterSpacing: '1px', textShadow: '0 0 10px rgba(2, 239, 240, 0.5)', transition: 'all 0.3s ease' }} onMouseEnter={(e) => e.target.style.filter = 'brightness(1.2)'} onMouseLeave={(e) => e.target.style.filter = 'brightness(1)'}>HY-AQMS</h2>
           <div style={{ background: 'var(--accent-bg-hover)', border: '1px solid rgba(2, 239, 240, 0.2)', padding: '0.2rem 0.6rem', borderRadius: '12px', display: 'inline-block', marginTop: '0.5rem' }}>
             <span style={{ color: 'var(--accent)', fontSize: '0.65rem', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px' }}>
               📍 {selectedRegion === 'all' ? 'City-wide View' : selectedRegion}
@@ -432,7 +439,7 @@ const AppInner = () => {
           })}
         </nav>
 
-        <LoginSection setShowSplash={setShowSplash} setNotify={setNotify} />
+        <LoginSection setShowSplash={setShowSplash} setNotify={setNotify} showLoginPanel={showLoginPanel} setShowLoginPanel={setShowLoginPanel} />
 
         <div style={{ padding: '1.5rem 2rem', background: 'var(--overlay-bg)', borderTop: '1px solid var(--border)' }}>
           <div>
