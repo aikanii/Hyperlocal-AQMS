@@ -119,9 +119,9 @@ redisClient.connect().then(() => console.log('Connected to Redis')).catch(consol
 let predictionBatchTimer = null;
 const processPredictionBatch = async () => {
   try {
-    // Trigger batch prediction from ML service
+    // Trigger batch prediction from ML service (GET method - ML service only exposes GET endpoints)
     const mlRes = await fetch('http://ml-service:8000/api/ml/predict/city', {
-      method: 'POST',
+      method: 'GET',
       headers: { 'Content-Type': 'application/json' },
       timeout: 10000
     });
@@ -164,7 +164,17 @@ const processPredictionBatch = async () => {
         }
       }
     } else {
-      console.warn(`[PRED] ⚠ ML service returned ${mlRes.status}`);
+      // Log detailed error info from ML service
+      let errorDetail = `Status: ${mlRes.status}`;
+      try {
+        const errorBody = await mlRes.json();
+        if (errorBody && errorBody.detail) {
+          errorDetail += ` - ${errorBody.detail}`;
+        }
+      } catch (e) {
+        // Response body not JSON, skip
+      }
+      console.warn(`[PRED] ⚠ ML service returned error: ${errorDetail}`);
     }
   } catch (mlErr) {
     console.error('[PRED] ✗ Batch prediction error:', mlErr.message);
