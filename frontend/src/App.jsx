@@ -212,6 +212,8 @@ const AppInner = () => {
 
   const safeActiveTab = NAV_TABS.some(t => t.id === activeTab) ? activeTab : 'map';
 
+  const EMBR_X_DEVICE_ID = 'denr_emb_x_reference_001';
+
   useEffect(() => {
     axios.defaults.baseURL = API_URL;
 
@@ -221,7 +223,19 @@ const AppInner = () => {
           axios.get('/api/readings/latest'),
           axios.get('/api/devices')
         ]);
-        setReadings(Array.isArray(readingsRes.data) ? readingsRes.data : []);
+        let initialReadings = Array.isArray(readingsRes.data) ? readingsRes.data : [];
+        // Try to fetch external EMBR-X latest reading and merge it
+        try {
+          const ext = await axios.get('/api/external/embrx/latest');
+          if (ext?.data && ext.data.device_id === EMBR_X_DEVICE_ID) {
+            const idx = initialReadings.findIndex(r => r.device_id === EMBR_X_DEVICE_ID);
+            if (idx > -1) initialReadings[idx] = ext.data; else initialReadings.push(ext.data);
+          }
+        } catch (e) {
+          // ignore external read error — backend poller may not have run yet
+        }
+
+        setReadings(initialReadings);
         setDevices(Array.isArray(devicesRes.data) ? devicesRes.data : []);
       } catch (err) {
         console.error('Error fetching initial data:', err);

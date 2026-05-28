@@ -108,6 +108,173 @@ const ensurePredictionsUniqueIndex = async () => {
 };
 ensurePredictionsUniqueIndex();
 
+const EMBR_X_DEVICE_ID = 'denr_emb_x_reference_001';
+const EMBR_X_API_URL = 'https://api.bpit-inc.com/embrx/l';
+const EMBR_X_STATION_ID = 'Iligan City';
+const EMBR_X_POLL_INTERVAL_MS = 5 * 60 * 1000; // poll every 5 minutes
+let embrxPollTimer = null;
+
+const parseNumber = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const normalized = String(value).replace(/,/g, '');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const parseEmbrxTimestamp = (payload) => {
+  if (payload && typeof payload.date === 'string') {
+    const normalized = payload.date.trim().replace(' ', 'T');
+    const date = new Date(normalized);
+    if (!Number.isNaN(date.getTime())) {
+      return date;
+    }
+  }
+  return new Date();
+};
+
+const ensureEmbrxDeviceRecord = async () => {
+  try {
+    await pool.query(
+      `INSERT INTO devices (device_id, name, lat, lng, status, region, calibration_coefficients)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (device_id) DO NOTHING`,
+      [
+        EMBR_X_DEVICE_ID,
+        'DENR-EMB X Reference Grade Air Monitor',
+        8.237232,
+        124.252956,
+        'active',
+        'All',
+        JSON.stringify({ pm2_5_slope: 1.0, pm2_5_intercept: 0.0 }),
+      ]
+    );
+    console.log('[EMBRX] ✓ External device record ensured in devices table');
+  } catch (err) {
+    console.error('[EMBRX] ✗ Failed to ensure external device record:', err.message);
+  }
+};
+
+const normalizeEmbrxStation = (stationArray) => {
+  if (!Array.isArray(stationArray)) return null;
+  const result = {};
+  for (const entry of stationArray) {
+    if (entry && typeof entry.key === 'string') {
+      result[entry.key] = entry.value;
+    }
+  }
+  return result;
+};
+
+const extractEmbrxReading = (payload) => {
+  if (!Array.isArray(payload) || payload.length === 0) return null;
+
+  const stationArray = payload.find((station) => {
+    if (!Array.isArray(station)) return false;
+    return station.some((entry) => entry.key === 'stationID' && entry.value === EMBR_X_STATION_ID);
+  }) || payload[0];
+
+  const raw = normalizeEmbrxStation(stationArray);
+  if (!raw) return null;
+
+  const pm2_5 = parseNumber(raw.pm25Concentration ?? raw.pm25 ?? raw.pm25Nowcast ?? raw.pm25AQI ?? raw.pm25AQI24hr);
+  const pm25_aqi = parseNumber(raw.pm25AQI ?? raw.pm25AQI24hr ?? raw.pm25_aqi ?? raw.pm25_aqi24h);
+  const temperature = parseNumber(raw.ambientTemperature ?? raw.ambient_temperature ?? raw.temperature);
+  const humidity = parseNumber(raw.ambientHumidity ?? raw.ambient_humidity ?? raw.humidity);
+
+  if (pm2_5 === null && pm25_aqi === null && temperature === null && humidity === null) {
+    return null;
+  }
+
+  return {
+    time: parseEmbrxTimestamp(raw),
+    pm2_5,
+    pm25_aqi,
+    temperature,
+    humidity,
+  };
+};
+
+const processEmbrxPoll = async () => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const response = await fetch(EMBR_X_API_URL, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: { Accept: 'application/json' },
+    });
+
+    if (!response.ok) {
+      console.warn(`[EMBRX] ⚠ External API returned ${response.status} ${response.statusText}`);
+      return;
+    }
+
+    const data = await response.json();
+    const reading = extractEmbrxReading(data);
+
+    if (!reading || reading.pm2_5 === null || reading.temperature === null || reading.humidity === null) {
+      console.warn('[EMBRX] ⚠ External API payload missing required fields', data);
+      return;
+    }
+
+    const query = `
+      INSERT INTO readings (
+        time, device_id, pm2_5, pm2_5_cal, temperature, humidity
+      ) VALUES ($1, $2, $3, $4, $5, $6)
+    `;
+    const values = [
+      reading.time,
+      EMBR_X_DEVICE_ID,
+      reading.pm2_5,
+      reading.pm2_5,
+      reading.temperature,
+      reading.humidity,
+    ];
+
+    await pool.query(query, values);
+    console.log('[EMBRX] ✓ External reading saved for', EMBR_X_DEVICE_ID);
+
+    const cachedReading = {
+      time: reading.time,
+      device_id: EMBR_X_DEVICE_ID,
+      pm2_5: reading.pm2_5,
+      pm25_aqi: reading.pm25_aqi,
+      pm2_5_cal: reading.pm2_5,
+      temperature: reading.temperature,
+      humidity: reading.humidity,
+    };
+
+    if (io.engine.clientsCount > 0) {
+      io.emit('new_reading', cachedReading);
+    }
+
+    await Promise.all([
+      redisClient.set(`device:latest:${EMBR_X_DEVICE_ID}`, JSON.stringify(cachedReading), { EX: 3600 }),
+      redisClient.del('latest_readings:all'),
+    ]).catch((err) => {
+      console.error('[EMBRX] ✗ Redis cache update failed:', err.message);
+    });
+  } catch (err) {
+    console.error('[EMBRX] ✗ Polling error:', err.message);
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const startEmbrxPoller = () => {
+  processEmbrxPoll();
+  embrxPollTimer = setInterval(processEmbrxPoll, EMBR_X_POLL_INTERVAL_MS);
+  console.log('[EMBRX] ✓ External EMBR API poller started (5m interval)');
+};
+
+const stopEmbrxPoller = () => {
+  if (embrxPollTimer) {
+    clearInterval(embrxPollTimer);
+    console.log('[EMBRX] ✓ External EMBR API poller stopped');
+  }
+};
+
 const redisClient = redis.createClient({
   url: process.env.REDIS_URL || 'redis://redis:6379'
 });
@@ -508,6 +675,41 @@ app.get('/api/devices/:id/latest', async (req, res) => {
   }
 });
 
+app.get('/api/external/embrx/latest', async (req, res) => {
+  try {
+    const cacheKey = `device:latest:${EMBR_X_DEVICE_ID}`;
+    
+    // Set a timeout for Redis get operation
+    const redisPromise = redisClient.get(cacheKey);
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Redis timeout')), 2000)
+    );
+    
+    try {
+      const cached = await Promise.race([redisPromise, timeoutPromise]);
+      if (cached) {
+        return res.json(JSON.parse(cached));
+      }
+    } catch (rediErr) {
+      console.warn('[EMBR-X] ⚠ Redis get timed out or failed:', rediErr.message);
+      // Fall through to database query
+    }
+    
+    // Fallback to database if cache miss or Redis timeout
+    const result = await pool.query(
+      'SELECT time, device_id, pm2_5, pm2_5_cal, temperature, humidity FROM readings WHERE device_id = $1 ORDER BY time DESC LIMIT 1',
+      [EMBR_X_DEVICE_ID]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No EMBR-X readings found' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[EMBR-X] ✗ Error in /api/external/embrx/latest:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/readings/latest', async (req, res) => {
   try {
     // Check cache first
@@ -784,16 +986,19 @@ app.post('/api/sim/inject', simLimiter, async (req, res) => {
 
 // --- Finalization: Start Server ---
 const PORT = process.env.PORT || 3000;
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   console.log(`Backend server listening on port ${PORT}`);
   initServer(server);
   startPredictionBatchProcessor();  // Start batch prediction processor
+  await ensureEmbrxDeviceRecord();
+  startEmbrxPoller();
 });
 
 // --- Graceful Shutdown ---
 const shutdown = async () => {
   console.log('SIGTERM signal received: closing HTTP server');
   stopPredictionBatchProcessor();  // Stop batch prediction processor
+  stopEmbrxPoller();
   server.close(async () => {
     console.log('HTTP server closed');
     try {

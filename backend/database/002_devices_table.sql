@@ -19,6 +19,7 @@ VALUES
     ('tambo_terminal_001', 'Tambo Bus Terminal', 8.241729644196798, 124.26107653891862, 'active', '{"pm2_5_slope": 1.0, "pm2_5_intercept": 0.0}'),
     ('nsc_iligan_001', 'National Steel Corporation', 8.208591675619148, 124.21530248149182, 'active', '{"pm2_5_slope": 1.0, "pm2_5_intercept": 0.0}'),
     ('pilmico_corp_001', 'Kiwalan', 8.28882456057826, 124.26125149498404, 'active', '{"pm2_5_slope": 1.0, "pm2_5_intercept": 0.0}'),
+    ('denr_emb_x_reference_001', 'DENR-EMB X Reference Grade Air Monitor', 8.237232, 124.252956, 'active', '{"pm2_5_slope": 1.0, "pm2_5_intercept": 0.0}'),
     ('iligan_city_hall_001', 'Iligan City Hall', 8.226147134629919, 124.25179693916404, 'active', '{"pm2_5_slope": 1.1, "pm2_5_intercept": -0.5}'),
     ('msu_iit_campus_001', 'MSU-IIT Campus', 8.241170534693753, 124.24334976800029, 'active', '{"pm2_5_slope": 1.0, "pm2_5_intercept": 0.0}')
 ON CONFLICT (device_id) DO NOTHING;

@@ -184,11 +184,17 @@ const Devices = ({ isAdmin = false, readings = [] }) => {
         /* PUBLIC VIEW: Premium Station Gallery */
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '2rem' }}>
           {devices.map(device => {
+            const isReference = device.device_id === 'denr_emb_x_reference_001';
             const latest = readings.find(r => r.device_id === device.device_id);
             const isOffline = device.status !== 'active' || (latest && (new Date() - new Date(latest.time)) > 600000);
             
             return (
-              <div key={device.device_id} className="glass-panel hover-lift animate-stagger" style={{ padding: '2rem', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
+              <div key={device.device_id} className="glass-panel hover-lift animate-stagger" style={{ 
+                padding: '2rem', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden',
+                border: isReference ? '1px solid rgba(245,158,11,0.5)' : '1px solid var(--border)',
+                background: isReference ? 'rgba(245,158,11,0.05)' : 'var(--panel)',
+                boxShadow: isReference ? '0 0 20px rgba(245,158,11,0.1)' : 'none'
+              }}>
                 {/* Status Indicator Top Right */}
                 <div style={{ position: 'absolute', top: '1.5rem', right: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                   <div className={!isOffline ? 'pulse' : ''} style={{ width: '8px', height: '8px', borderRadius: '50%', background: isOffline ? '#ef4444' : '#10b981' }} />
@@ -197,8 +203,8 @@ const Devices = ({ isAdmin = false, readings = [] }) => {
                   </span>
                 </div>
 
-                <h3 style={{ margin: '0 0 1.5rem 0', fontSize: '1.4rem', fontWeight: '800', color: 'var(--text)' }}>
-                  {device.name}
+                <h3 style={{ margin: '0 0 1.5rem 0', fontSize: '1.4rem', fontWeight: '800', color: isReference ? '#f59e0b' : 'var(--text)' }}>
+                  {device.name} {isReference && <span style={{ fontSize: '0.65rem', marginLeft: '0.6rem', color: '#ffffff', background: '#f59e0b', padding: '0.15rem 0.4rem', borderRadius: '6px', fontWeight: '700' }}>DENR-EMB Reference</span>}
                 </h3>
 
                 {/* Sensor Suite Icons */}
@@ -253,6 +259,7 @@ const Devices = ({ isAdmin = false, readings = [] }) => {
             </thead>
             <tbody>
               {devices.map(device => {
+                const isReference = device.device_id === 'denr_emb_x_reference_001';
                 const latest = readings.find(r => r.device_id === device.device_id);
                 const now = new Date();
                 const lastSeen = latest ? new Date(latest.time) : null;
@@ -269,9 +276,12 @@ const Devices = ({ isAdmin = false, readings = [] }) => {
                 };
 
                 return (
-                  <tr key={device.device_id} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '1rem' }}><code>{device.device_id}</code></td>
-                    <td style={{ padding: '1rem', fontWeight: '500' }}>{device.name}</td>
+                  <tr key={device.device_id} style={{ 
+                    borderBottom: '1px solid var(--border)',
+                    background: isReference ? 'rgba(245,158,11,0.08)' : 'transparent'
+                  }}>
+                    <td style={{ padding: '1rem' }}><code>{device.device_id}</code>{isReference && <div style={{ fontSize: '0.7rem', color: '#f59e0b', marginTop: '4px', fontWeight: 'bold' }}>⭐ Reference Grade</div>}</td>
+                    <td style={{ padding: '1rem', fontWeight: '500', color: isReference ? '#f59e0b' : 'inherit' }}>{device.name}</td>
                     <td style={{ padding: '1rem', color: 'var(--text-dim)' }}>{device.lat.toFixed(4)}, {device.lng.toFixed(4)}</td>
                     <td style={{ padding: '1rem', fontSize: '0.9rem' }}>
                       {device.calibration_coefficients?.pm2_5_slope || 1.0}x + {device.calibration_coefficients?.pm2_5_intercept || 0.0}

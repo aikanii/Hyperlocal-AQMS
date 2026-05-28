@@ -191,29 +191,36 @@ const Analytics = () => {
           <h3 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '1px' }}>Sensor Placements</h3>
         </div>
         <div className="analytics-sidebar-list" style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
-          {devices.map(device => (
+          {devices.map(device => {
+            const isRef = device.device_id === 'denr_emb_x_reference_001';
+            const isSelected = selectedDeviceId === device.device_id;
+            return (
             <button
               key={device.device_id}
               onClick={() => setSelectedDeviceId(device.device_id)}
-              className={`nav-btn ${selectedDeviceId === device.device_id ? 'active' : ''}`}
+              className={`nav-btn ${isSelected ? 'active' : ''}`}
               style={{
                 width: '100%',
                 padding: '1rem',
                 marginBottom: '0.5rem',
-                background: selectedDeviceId === device.device_id ? 'var(--accent-bg-hover)' : 'transparent',
+                background: isSelected && isRef ? 'rgba(245,158,11,0.15)' : isSelected ? 'var(--accent-bg-hover)' : isRef ? 'rgba(245,158,11,0.05)' : 'transparent',
                 border: '1px solid',
-                borderColor: selectedDeviceId === device.device_id ? 'var(--accent-border)' : 'transparent',
+                borderColor: isSelected && isRef ? '#f59e0b' : isSelected ? 'var(--accent-border)' : isRef ? 'rgba(245,158,11,0.3)' : 'transparent',
                 borderRadius: '8px',
                 textAlign: 'left',
                 cursor: 'pointer',
-                color: selectedDeviceId === device.device_id ? 'var(--accent)' : 'var(--text-dim)',
-                transition: 'all 0.2s ease'
+                color: isSelected && isRef ? '#f59e0b' : isSelected ? 'var(--accent)' : isRef ? '#f59e0b' : 'var(--text-dim)',
+                transition: 'all 0.2s ease',
+                position: 'relative'
               }}
             >
-              <div style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>{device.name}</div>
+              <div style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>
+                {device.name}
+              </div>
               <div style={{ fontSize: '0.7rem', opacity: 0.7 }}>ID: {device.device_id}</div>
+              {isRef && <div style={{ position: 'absolute', top: '12px', right: '12px', fontSize: '0.8rem' }}>⭐</div>}
             </button>
-          ))}
+          )})}
         </div>
       </aside>
 
@@ -230,7 +237,12 @@ const Analytics = () => {
             <header style={{ marginBottom: '2.5rem' }}>
               <div className="analytics-header-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
-                  <h2 style={{ fontSize: '2.2rem', fontWeight: '800', margin: '0 0 0.5rem 0' }}>{selectedDevice.name}</h2>
+                  <h2 style={{ fontSize: '2.2rem', fontWeight: '800', margin: '0 0 0.5rem 0', display: 'flex', alignItems: 'center' }}>
+                    {selectedDevice.name}
+                    {selectedDevice.device_id === 'denr_emb_x_reference_001' && (
+                      <span style={{ fontSize: '0.85rem', marginLeft: '0.8rem', color: '#f59e0b', background: 'rgba(245,158,11,0.1)', padding: '0.3rem 0.6rem', borderRadius: '6px', fontWeight: '700', border: '1px solid rgba(245,158,11,0.3)', verticalAlign: 'middle' }}>⭐ REFERENCE GRADE</span>
+                    )}
+                  </h2>
                   <p style={{ color: 'var(--text-dim)', margin: 0 }}>
                     Coordinates: {selectedDevice.lat.toFixed(4)}, {selectedDevice.lng.toFixed(4)} • Status:
                     <span style={{ color: 'var(--accent)', marginLeft: '0.5rem', fontWeight: 'bold' }}>{selectedDevice.status.toUpperCase()}</span>

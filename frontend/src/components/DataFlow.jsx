@@ -16,6 +16,9 @@ const getPaqiColor = (pm25) => {
 };
 
 const ACCENT = '#02EFF0';
+const REF_COLOR = '#f59e0b';
+const DENR_DEVICE_ID = 'denr_emb_x_reference_001';
+const isRefNode = (deviceId) => deviceId === DENR_DEVICE_ID;
 const NODE_W = 92;
 const NODE_H = 60;
 
@@ -45,6 +48,7 @@ const PipelineSVG = ({ devices, getReading, isActive }) => {
     backend: { x: 462, y: cy,       label: 'Backend',     sub: 'Node.js',     icon: '⚙️',  color: ACCENT    },
     tsdb:    { x: 624, y: cy - 62,  label: 'TimescaleDB', sub: 'PostgreSQL',  icon: '🗄️',  color: '#3b82f6' },
     redis:   { x: 624, y: cy + 62,  label: 'Redis Cache', sub: 'In-memory',   icon: '🔴', color: '#ef4444' },
+    lstm:    { x: 624, y: cy + 148, label: 'LSTM Model',  sub: 'FastAPI ML',  icon: '🧠', color: '#d946ef' },
     socket:  { x: 790, y: cy,       label: 'Socket.IO',   sub: 'WebSocket',   icon: '⚡',  color: '#f59e0b' },
     dash:    { x: 955, y: cy,       label: 'Dashboard',   sub: 'React SPA',   icon: '📊', color: '#22c55e' },
   };
@@ -54,6 +58,8 @@ const PipelineSVG = ({ devices, getReading, isActive }) => {
     [INFRA.mqtt,   INFRA.backend, INFRA.backend.color, '1.3s'],
     [INFRA.backend, INFRA.tsdb,  INFRA.tsdb.color,    '1.1s'],
     [INFRA.backend, INFRA.redis, INFRA.redis.color,   '1.5s'],
+    [INFRA.tsdb,   INFRA.lstm,   INFRA.lstm.color,    '1.8s'],
+    [INFRA.lstm,   INFRA.backend, INFRA.lstm.color,   '2.1s'],
     [INFRA.tsdb,   INFRA.socket, INFRA.socket.color,  '1.2s'],
     [INFRA.redis,  INFRA.socket, INFRA.socket.color,  '1.6s'],
     [INFRA.socket, INFRA.dash,   INFRA.dash.color,    '0.95s'],
@@ -67,9 +73,12 @@ const PipelineSVG = ({ devices, getReading, isActive }) => {
     cy: sensorTopY + i * (SENSOR_H + SENSOR_GAP) + SENSOR_H / 2,
   }));
 
+  // Ensure SVG is tall enough to fit the LSTM node below Redis
+  const minSvgH = Math.max(svgH, cy + 148 + NODE_H / 2 + 40);
+
   return (
     <svg
-      viewBox={`0 0 1090 ${svgH}`}
+      viewBox={`0 0 1090 ${minSvgH}`}
       style={{ width: '100%', minWidth: '760px', display: 'block' }}
     >
       <defs>
@@ -131,41 +140,55 @@ const PipelineSVG = ({ devices, getReading, isActive }) => {
         const active  = isActive(device.device_id);
         const reading = getReading(device.device_id);
         const pm25    = reading?.pm2_5_cal ?? null;
-        const color   = active ? (getPaqiColor(pm25) || ACCENT) : 'var(--text-dim)';
+        const isRef   = isRefNode(device.device_id);
+        const color   = isRef ? REF_COLOR : active ? (getPaqiColor(pm25) || ACCENT) : 'var(--text-dim)';
         const rx = cx - SENSOR_W / 2;
         const ry = sy - SENSOR_H / 2;
         const name = (device.name || device.device_id).slice(0, 13);
 
         return (
           <g key={`sn-${device.device_id}`}>
-            {/* Glow aura on active */}
-            {active && (
+            {/* Glow aura */}
+            {(active || isRef) && (
               <rect x={rx - 4} y={ry - 4} width={SENSOR_W + 8} height={SENSOR_H + 8}
-                rx={12} fill={color} opacity={0.07} filter="url(#df-glow)" />
+                rx={isRef ? 4 : 12} fill={color} opacity={isRef ? 0.12 : 0.07} filter="url(#df-glow)" />
             )}
             {/* Card */}
-            <rect x={rx} y={ry} width={SENSOR_W} height={SENSOR_H} rx={9}
-              fill={active ? 'rgba(2,239,240,0.05)' : 'var(--overlay-bg)'}
-              stroke={color} strokeWidth={active ? 1.5 : 1} />
+            <rect x={rx} y={ry} width={SENSOR_W} height={SENSOR_H} rx={isRef ? 4 : 9}
+              fill={isRef ? 'rgba(245,158,11,0.08)' : active ? 'rgba(2,239,240,0.05)' : 'var(--overlay-bg)'}
+              stroke={color} strokeWidth={isRef ? 2 : active ? 1.5 : 1}
+              strokeDasharray={isRef ? '6 3' : 'none'} />
 
-            {/* Pulse dot */}
-            <circle cx={rx + 13} cy={ry + 13} r={4.5} fill={color}>
-              {active && <animate attributeName="r"       values="4.5;6;4.5" dur="1.6s" repeatCount="indefinite" />}
-              {active && <animate attributeName="opacity" values="1;0.45;1"   dur="1.6s" repeatCount="indefinite" />}
-            </circle>
+            {/* Indicator: diamond for REF, circle for normal */}
+            {isRef ? (
+              <g transform={`translate(${rx + 13}, ${ry + 13})`}>
+                <rect x={-5} y={-5} width={10} height={10} rx={1.5}
+                  fill={REF_COLOR} transform="rotate(45)">
+                  <animate attributeName="opacity" values="1;0.5;1" dur="2s" repeatCount="indefinite" />
+                </rect>
+              </g>
+            ) : (
+              <circle cx={rx + 13} cy={ry + 13} r={4.5} fill={color}>
+                {active && <animate attributeName="r"       values="4.5;6;4.5" dur="1.6s" repeatCount="indefinite" />}
+                {active && <animate attributeName="opacity" values="1;0.45;1"   dur="1.6s" repeatCount="indefinite" />}
+              </circle>
+            )}
 
             {/* Device name */}
             <text x={rx + 25} y={ry + 13} dominantBaseline="middle"
-              fill="white" fontSize={9.5} fontWeight="700" fontFamily="monospace">
+              fill={isRef ? REF_COLOR : 'white'} fontSize={isRef ? 8.5 : 9.5} fontWeight="700" fontFamily="monospace">
               {name}
             </text>
 
             {/* Status badge */}
             <rect x={rx + 4} y={ry + SENSOR_H - 22} width={SENSOR_W - 8} height={16}
-              rx={4} fill={active ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)'} />
+              rx={4} fill={isRef ? 'rgba(245,158,11,0.15)' : active ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.1)'} />
             <text x={cx} y={ry + SENSOR_H - 14} textAnchor="middle" dominantBaseline="middle"
-              fill={active ? '#22c55e' : '#ef4444'} fontSize={8} fontWeight="700" fontFamily="monospace">
-              {active ? `${pm25 != null ? pm25.toFixed(1) + ' µg/m³' : 'LIVE'}` : 'OFFLINE'}
+              fill={isRef ? REF_COLOR : active ? '#22c55e' : '#ef4444'} fontSize={isRef ? 7 : 8} fontWeight="700" fontFamily="monospace">
+              {isRef
+                ? (pm25 != null ? `REF ${pm25.toFixed(1)} µg/m³` : '⭐ REFERENCE')
+                : active ? `${pm25 != null ? pm25.toFixed(1) + ' µg/m³' : 'LIVE'}` : 'OFFLINE'
+              }
             </text>
           </g>
         );
@@ -205,16 +228,23 @@ const PipelineSVG = ({ devices, getReading, isActive }) => {
         );
       })}
 
+      {/* ── LSTM prediction label ── */}
+      <text x={INFRA.lstm.x} y={INFRA.lstm.y + NODE_H / 2 + 16} textAnchor="middle"
+        fill={INFRA.lstm.color} fontSize={6.5} letterSpacing="1.2"
+        fontWeight="700" fontFamily="monospace" opacity={0.7}>
+        PREDICTION PIPELINE
+      </text>
+
       {/* ── Stage labels (bottom row) ── */}
       {[
         { x: SENSOR_CX,         label: 'SENSOR LAYER'  },
         { x: INFRA.mqtt.x,      label: 'TRANSPORT'     },
         { x: INFRA.backend.x,   label: 'PROCESSING'    },
-        { x: INFRA.tsdb.x,      label: 'STORAGE'       },
+        { x: INFRA.tsdb.x,      label: 'STORAGE + ML'  },
         { x: INFRA.socket.x,    label: 'REAL-TIME'     },
         { x: INFRA.dash.x,      label: 'PRESENTATION'  },
       ].map(({ x, label }) => (
-        <text key={label} x={x} y={svgH - 8} textAnchor="middle"
+        <text key={label} x={x} y={minSvgH - 8} textAnchor="middle"
           fill="var(--text-dim)" fontSize={7} letterSpacing="1.5"
           fontWeight="700" fontFamily="monospace">
           {label}
@@ -227,68 +257,93 @@ const PipelineSVG = ({ devices, getReading, isActive }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // SensorCard — detail card below the diagram
 // ─────────────────────────────────────────────────────────────────────────────
-const SensorCard = ({ device, active, reading, pm25, color, timeSince }) => (
-  <div className="glass-panel hover-lift" style={{
-    padding: '1.5rem',
-    borderLeft: `4px solid ${color}`,
-    opacity: active ? 1 : 0.55,
-    transition: 'opacity 0.4s ease, box-shadow 0.3s ease',
-  }}>
-    {/* Top row */}
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-      <div>
-        <div style={{ fontWeight: '700', fontSize: '0.95rem', marginBottom: '0.2rem' }}>
-          {device.name || device.device_id}
-        </div>
-        <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
-          {device.device_id}
-        </div>
-        {device.region && (
-          <div style={{ fontSize: '0.65rem', color: 'var(--accent)', marginTop: '0.15rem' }}>
-            📍 {device.region}
-          </div>
-        )}
-      </div>
+const SensorCard = ({ device, active, reading, pm25, color, timeSince }) => {
+  const isRef = isRefNode(device.device_id);
+  const cardColor = isRef ? REF_COLOR : color;
 
-      {/* Status pill */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: '0.4rem',
-        padding: '0.25rem 0.75rem', borderRadius: '20px',
-        background: active ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-        border: `1px solid ${active ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.2)'}`,
-        fontSize: '0.65rem', fontWeight: 'bold',
-        color: active ? '#22c55e' : '#ef4444',
-      }}>
+  return (
+    <div className="glass-panel hover-lift" style={{
+      padding: '1.5rem',
+      borderLeft: `4px solid ${cardColor}`,
+      borderTop: isRef ? `1px solid rgba(245,158,11,0.25)` : 'none',
+      borderRight: isRef ? `1px solid rgba(245,158,11,0.1)` : 'none',
+      opacity: active || isRef ? 1 : 0.55,
+      transition: 'opacity 0.4s ease, box-shadow 0.3s ease',
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      {isRef && (
         <div style={{
-          width: '5px', height: '5px', borderRadius: '50%',
-          background: active ? '#22c55e' : '#ef4444',
-          animation: active ? 'pulse-glow 1.5s infinite' : 'none',
-        }} />
-        {active ? 'TRANSMITTING' : 'OFFLINE'}
+          position: 'absolute', top: '0', right: '0',
+          background: 'linear-gradient(135deg, rgba(245,158,11,0.2), rgba(245,158,11,0.05))',
+          padding: '0.15rem 0.6rem 0.15rem 0.8rem',
+          borderBottomLeftRadius: '8px',
+          fontSize: '0.55rem', fontWeight: '800', letterSpacing: '1px',
+          color: REF_COLOR, fontFamily: 'monospace',
+        }}>
+          ⭐ REFERENCE GRADE
+        </div>
+      )}
+      {/* Top row */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+        <div>
+          <div style={{ fontWeight: '700', fontSize: '0.95rem', marginBottom: '0.2rem', color: isRef ? REF_COLOR : 'inherit' }}>
+            {device.name || device.device_id}
+          </div>
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
+            {device.device_id}
+          </div>
+          {device.region && (
+            <div style={{ fontSize: '0.65rem', color: isRef ? REF_COLOR : 'var(--accent)', marginTop: '0.15rem' }}>
+              📍 {device.region}
+            </div>
+          )}
+        </div>
+
+        {/* Status pill */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.4rem',
+          padding: '0.25rem 0.75rem', borderRadius: '20px',
+          background: isRef ? 'rgba(245,158,11,0.1)' : active ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+          border: `1px solid ${isRef ? 'rgba(245,158,11,0.3)' : active ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.2)'}`,
+          fontSize: '0.65rem', fontWeight: 'bold',
+          color: isRef ? REF_COLOR : active ? '#22c55e' : '#ef4444',
+          marginTop: isRef ? '1rem' : '0',
+        }}>
+          <div style={{
+            width: isRef ? '6px' : '5px', height: isRef ? '6px' : '5px',
+            borderRadius: isRef ? '1px' : '50%',
+            background: isRef ? REF_COLOR : active ? '#22c55e' : '#ef4444',
+            transform: isRef ? 'rotate(45deg)' : 'none',
+            animation: (active || isRef) ? 'pulse-glow 1.5s infinite' : 'none',
+          }} />
+          {isRef ? 'EXTERNAL REFERENCE' : active ? 'TRANSMITTING' : 'OFFLINE'}
+        </div>
+      </div>
+
+      {/* Metric tiles */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+        {[
+          { label: 'PM2.5',  val: pm25?.toFixed(1) ?? '---', unit: 'µg/m³', c: cardColor },
+          { label: 'TEMP',   val: reading?.temperature?.toFixed(1) ?? '---', unit: '°C',    c: 'white' },
+          { label: 'SYNCED', val: timeSince(reading?.time), unit: '',       c: 'var(--text-dim)' },
+        ].map(({ label, val, unit, c }) => (
+          <div key={label} style={{
+            background: isRef ? 'rgba(245,158,11,0.04)' : 'var(--overlay-bg)',
+            padding: '0.6rem', borderRadius: '8px', textAlign: 'center',
+            border: isRef ? '1px solid rgba(245,158,11,0.1)' : 'none',
+          }}>
+            <div style={{ fontSize: '0.55rem', color: 'var(--text-dim)', marginBottom: '0.3rem', letterSpacing: '0.5px', fontWeight: 'bold' }}>
+              {label}
+            </div>
+            <div style={{ fontSize: '0.9rem', fontWeight: '700', color: c }}>{val}</div>
+            {unit && <div style={{ fontSize: '0.55rem', color: 'var(--text-dim)' }}>{unit}</div>}
+          </div>
+        ))}
       </div>
     </div>
-
-    {/* Metric tiles */}
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
-      {[
-        { label: 'PM2.5',  val: pm25?.toFixed(1) ?? '---', unit: 'µg/m³', c: color },
-        { label: 'TEMP',   val: reading?.temperature?.toFixed(1) ?? '---', unit: '°C',    c: 'white' },
-        { label: 'SYNCED', val: timeSince(reading?.time), unit: '',       c: 'var(--text-dim)' },
-      ].map(({ label, val, unit, c }) => (
-        <div key={label} style={{
-          background: 'var(--overlay-bg)',
-          padding: '0.6rem', borderRadius: '8px', textAlign: 'center',
-        }}>
-          <div style={{ fontSize: '0.55rem', color: 'var(--text-dim)', marginBottom: '0.3rem', letterSpacing: '0.5px', fontWeight: 'bold' }}>
-            {label}
-          </div>
-          <div style={{ fontSize: '0.9rem', fontWeight: '700', color: c }}>{val}</div>
-          {unit && <div style={{ fontSize: '0.55rem', color: 'var(--text-dim)' }}>{unit}</div>}
-        </div>
-      ))}
-    </div>
-  </div>
-);
+  );
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DataFlow — main export
@@ -345,6 +400,8 @@ const DataFlow = ({ readings }) => {
     { color: 'var(--text-dim)', shape: 'dot',  label: 'Offline / No data' },
     { color: ACCENT,                   shape: 'line', label: 'Live data stream' },
     { color: '#8b5cf6',                shape: 'dot',  label: 'Moving data packet' },
+    { color: '#d946ef',                shape: 'line', label: 'LSTM prediction flow' },
+    { color: REF_COLOR,                shape: 'diamond', label: 'DENR reference node' },
   ];
 
   return (
@@ -407,7 +464,9 @@ const DataFlow = ({ readings }) => {
             <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-dim)' }}>
               {shape === 'dot'
                 ? <div style={{ width: '9px', height: '9px', borderRadius: '50%', background: color, flexShrink: 0 }} />
-                : <div style={{ width: '26px', height: '2px', background: `repeating-linear-gradient(90deg, ${color} 0px, ${color} 5px, transparent 5px, transparent 9px)`, flexShrink: 0 }} />
+                : shape === 'diamond'
+                  ? <div style={{ width: '8px', height: '8px', background: color, transform: 'rotate(45deg)', borderRadius: '1.5px', flexShrink: 0 }} />
+                  : <div style={{ width: '26px', height: '2px', background: `repeating-linear-gradient(90deg, ${color} 0px, ${color} 5px, transparent 5px, transparent 9px)`, flexShrink: 0 }} />
               }
               {label}
             </div>

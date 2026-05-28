@@ -63,21 +63,25 @@ const ToggleSwitch = ({ checked, onChange }) => (
 
 // ── Per-Sensor Toggle Card ────────────────────────────────────────────────────
 const SensorToggleCard = ({ device, enabled, stats, onToggle }) => {
+  const isRef     = device.device_id === 'denr_emb_x_reference_001';
   const hasError  = !!stats?.error;
-  const borderClr = hasError ? '#ef4444' : enabled ? '#22c55e' : 'var(--border)';
+  const borderClr = hasError ? '#ef4444' : enabled ? '#22c55e' : isRef ? '#f59e0b' : 'var(--border)';
 
   return (
     <div className="glass-panel" style={{
       padding: '1.5rem',
       borderLeft: `4px solid ${borderClr}`,
+      background: isRef ? 'rgba(245,158,11,0.03)' : 'var(--panel)',
       transition: 'border-color 0.3s ease, box-shadow 0.3s ease',
-      boxShadow: enabled && !hasError ? '0 0 24px rgba(34,197,94,0.07)' : 'none',
+      boxShadow: enabled && !hasError ? '0 0 24px rgba(34,197,94,0.07)' : isRef ? '0 0 20px rgba(245,158,11,0.05)' : 'none',
+      position: 'relative'
     }}>
       {/* Name row + toggle */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.1rem' }}>
         <div style={{ minWidth: 0, flex: 1, marginRight: '1rem' }}>
-          <div style={{ fontWeight: '700', fontSize: '0.95rem', marginBottom: '0.15rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{ fontWeight: '700', fontSize: '0.95rem', marginBottom: '0.15rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: isRef ? '#f59e0b' : 'inherit' }}>
             {device.name || device.device_id}
+            {isRef && <span style={{ fontSize: '0.6rem', color: '#f59e0b', background: 'rgba(245,158,11,0.15)', padding: '0.15rem 0.3rem', borderRadius: '4px', marginLeft: '0.5rem', border: '1px solid rgba(245,158,11,0.3)', verticalAlign: 'middle' }}>REF</span>}
           </div>
           <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
             {device.device_id}

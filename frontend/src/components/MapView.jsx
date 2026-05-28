@@ -34,7 +34,22 @@ const createGlowingIcon = (color) => {
   });
 };
 
+const createReferenceIcon = () => {
+  return new L.DivIcon({
+    className: 'custom-icon',
+    html: `
+      <div class="aqi-marker-container" style="position: relative; display: flex; align-items: center; justify-content: center;">
+        <div class="aqi-marker-glow breathe" style="position: absolute; width: 35px; height: 35px; background: #f59e0b; opacity: 0.5; border-radius: 4px; transform: rotate(45deg); filter: blur(6px);"></div>
+        <div class="aqi-marker-core pulse" style="width: 14px; height: 14px; background: #f59e0b; border-radius: 2px; border: 2px solid white; box-shadow: 0 0 20px #f59e0b; z-index: 2; transform: rotate(45deg);"></div>
+      </div>
+    `,
+    iconSize: [35, 35],
+    iconAnchor: [17, 17]
+  });
+};
+
 const MapView = ({ readings }) => {
+  const EMBR_X_DEVICE_ID = 'denr_emb_x_reference_001';
   const [devices, setDevices] = useState([]);
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [showSensors, setShowSensors] = useState(true);
@@ -169,7 +184,7 @@ const MapView = ({ readings }) => {
             <Marker 
               key={device.device_id}
               position={[device.lat, device.lng]}
-              icon={createGlowingIcon(color)}
+              icon={device.device_id === EMBR_X_DEVICE_ID ? createReferenceIcon() : createGlowingIcon(color)}
             >
               <Popup className="glass-popup">
                 <div style={{ 
@@ -180,10 +195,12 @@ const MapView = ({ readings }) => {
                   fontFamily: '"Times New Roman", Times, serif'
                 }}>
                   <div style={{ display: 'flex', flexDirection: 'column', marginBottom: '1rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 'bold' }}>{device.name || device.device_id}</h4>
-                      <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', background: 'var(--overlay-bg-hover)', padding: '0.2rem 0.4rem', borderRadius: '4px' }}>STATION</span>
-                    </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 'bold', color: device.device_id === EMBR_X_DEVICE_ID ? '#f59e0b' : 'inherit' }}>{device.name || device.device_id}</h4>
+                        <span style={{ fontSize: '0.6rem', color: device.device_id === EMBR_X_DEVICE_ID ? '#f59e0b' : 'var(--text-dim)', background: device.device_id === EMBR_X_DEVICE_ID ? 'rgba(245,158,11,0.15)' : 'var(--overlay-bg-hover)', border: device.device_id === EMBR_X_DEVICE_ID ? '1px solid rgba(245,158,11,0.3)' : 'none', padding: '0.2rem 0.4rem', borderRadius: '4px', fontWeight: device.device_id === EMBR_X_DEVICE_ID ? 'bold' : 'normal' }}>
+                          {device.device_id === EMBR_X_DEVICE_ID ? 'REFERENCE' : 'STATION'}
+                        </span>
+                      </div>
                     <div style={{ fontSize: '0.7rem', color: info.color, fontWeight: 'bold', marginTop: '0.4rem', letterSpacing: '0.5px' }}>
                       {info.label} AQI
                     </div>
