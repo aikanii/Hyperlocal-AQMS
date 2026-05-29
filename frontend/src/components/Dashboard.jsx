@@ -107,7 +107,7 @@ const Dashboard = ({ readings }) => {
         label: 'PM2.5 (Historical)',
         data: pm25Data,
         borderColor: '#02EFF0',
-        backgroundColor: 'var(--accent-bg-hover)',
+        backgroundColor: 'rgba(2, 239, 240, 0.1)',
         borderWidth: 3,
         pointRadius: 4,
         pointBackgroundColor: '#0F282F',
