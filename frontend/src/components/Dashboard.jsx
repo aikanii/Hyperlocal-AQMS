@@ -146,16 +146,20 @@ const Dashboard = ({ readings }) => {
     responsive: true,
     interaction: { mode: 'index', intersect: false },
     plugins: {
-      legend: { display: true, position: 'top', labels: { color: 'var(--text-dim)', usePointStyle: true, boxWidth: 6 } },
+      legend: { display: true, position: 'top', labels: { color: '#ffffff', usePointStyle: true, boxWidth: 6 } },
       tooltip: {
-        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+        backgroundColor: 'transparent',
+        titleColor: '#ffffff',
+        bodyColor: '#ffffff',
+        borderColor: 'rgba(255, 255, 255, 0.3)',
+        borderWidth: 1,
         padding: 12,
         cornerRadius: 8
       }
     },
     scales: {
-      x: { grid: { display: false }, ticks: { color: 'var(--text-dim)', font: { size: 10 } } },
-      y: { grid: { color: 'var(--border)' }, ticks: { color: 'var(--text-dim)', font: { size: 10 } }, beginAtZero: true }
+      x: { grid: { display: false }, ticks: { color: '#ffffff', font: { size: 10 } } },
+      y: { grid: { color: 'var(--border)' }, ticks: { color: '#ffffff', font: { size: 10 } }, beginAtZero: true }
     }
   };
 
