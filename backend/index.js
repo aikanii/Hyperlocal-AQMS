@@ -176,12 +176,12 @@ const extractEmbrxReading = (payload) => {
   const raw = normalizeEmbrxStation(stationArray);
   if (!raw) return null;
 
-  const pm2_5 = parseNumber(raw.pm25Concentration ?? raw.pm25 ?? raw.pm25Nowcast ?? raw.pm25AQI ?? raw.pm25AQI24hr);
   const pm25_aqi = parseNumber(raw.pm25AQI ?? raw.pm25AQI24hr ?? raw.pm25_aqi ?? raw.pm25_aqi24h);
+  const pm2_5 = pm25_aqi; // Store PM2.5 as AQI rating for the reference node, not raw concentration.
   const temperature = parseNumber(raw.ambientTemperature ?? raw.ambient_temperature ?? raw.temperature);
   const humidity = parseNumber(raw.ambientHumidity ?? raw.ambient_humidity ?? raw.humidity);
 
-  if (pm2_5 === null && pm25_aqi === null && temperature === null && humidity === null) {
+  if (pm2_5 === null || temperature === null || humidity === null) {
     return null;
   }
 
@@ -218,6 +218,7 @@ const processEmbrxPoll = async () => {
       return;
     }
 
+    const pm25Value = reading.pm25_aqi ?? reading.pm2_5;
     const query = `
       INSERT INTO readings (
         time, device_id, pm2_5, pm2_5_cal, temperature, humidity
@@ -226,8 +227,8 @@ const processEmbrxPoll = async () => {
     const values = [
       reading.time,
       EMBR_X_DEVICE_ID,
-      reading.pm2_5,
-      reading.pm2_5,
+      pm25Value,
+      pm25Value,
       reading.temperature,
       reading.humidity,
     ];
@@ -238,9 +239,9 @@ const processEmbrxPoll = async () => {
     const cachedReading = {
       time: reading.time,
       device_id: EMBR_X_DEVICE_ID,
-      pm2_5: reading.pm2_5,
+      pm2_5: pm25Value,
       pm25_aqi: reading.pm25_aqi,
-      pm2_5_cal: reading.pm2_5,
+      pm2_5_cal: pm25Value,
       temperature: reading.temperature,
       humidity: reading.humidity,
     };
@@ -821,8 +822,9 @@ app.get('/api/stats/city', async (req, res) => {
         ROUND(AVG(humidity)::numeric, 2) AS avg_humidity
       FROM readings
       WHERE time >= NOW() - INTERVAL '${interval}'
+        AND device_id != 'denr_emb_x_reference_001'
       GROUP BY bucket
-      ORDER BY bucket DESC;
+      ORDER BY bucket ASC;
     `;
     const result = await pool.query(query);
     res.json(result.rows);
@@ -857,7 +859,7 @@ app.get('/api/stats/device/:id', async (req, res) => {
       FROM readings
       WHERE device_id = $1 AND time >= NOW() - INTERVAL '${interval}'
       GROUP BY bucket
-      ORDER BY bucket DESC;
+      ORDER BY bucket ASC;
     `;
     const result = await pool.query(query, [id]);
     res.json(result.rows);

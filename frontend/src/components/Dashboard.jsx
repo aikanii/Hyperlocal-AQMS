@@ -63,25 +63,27 @@ const Dashboard = ({ readings }) => {
     return () => socket.disconnect();
   }, [range]);
 
-  const liveAvg = readings.length > 0 ? {
-    pm1_0: readings.reduce((sum, r) => sum + (r.pm1_0 || 0), 0) / readings.length,
-    pm2_5: readings.reduce((sum, r) => sum + (r.pm2_5_cal || 0), 0) / readings.length,
-    pm10: readings.reduce((sum, r) => sum + (r.pm10 || 0), 0) / readings.length,
-    temp: readings.reduce((sum, r) => sum + (r.temperature || 0), 0) / readings.length,
-    hum: readings.reduce((sum, r) => sum + (r.humidity || 0), 0) / readings.length
+  const sensorReadings = readings.filter(r => r.device_id !== 'denr_emb_x_reference_001');
+  const liveAvg = sensorReadings.length > 0 ? {
+    pm1_0: sensorReadings.reduce((sum, r) => sum + (r.pm1_0 || 0), 0) / sensorReadings.length,
+    pm2_5: sensorReadings.reduce((sum, r) => sum + (r.pm2_5_cal || 0), 0) / sensorReadings.length,
+    pm10: sensorReadings.reduce((sum, r) => sum + (r.pm10 || 0), 0) / sensorReadings.length,
+    temp: sensorReadings.reduce((sum, r) => sum + (r.temperature || 0), 0) / sensorReadings.length,
+    hum: sensorReadings.reduce((sum, r) => sum + (r.humidity || 0), 0) / sensorReadings.length
   } : { pm1_0: null, pm2_5: null, pm10: null, temp: null, hum: null };
 
   const aqiColor = getAQIColor(liveAvg.pm2_5);
+  const sortedStats = [...stats].sort((a, b) => new Date(a.bucket) - new Date(b.bucket));
 
-  const pastLabels = stats.map(s => {
+  const pastLabels = sortedStats.map(s => {
     const date = new Date(s.bucket);
     if (range === '24h') return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     if (range === '7d') return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit' });
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  }).reverse();
+  });
 
-  const pastPm25 = stats.map(s => s.avg_pm2_5).reverse();
-  const pastPm10 = stats.map(s => s.avg_pm10).reverse();
+  const pastPm25 = sortedStats.map(s => s.avg_pm2_5);
+  const pastPm10 = sortedStats.map(s => s.avg_pm10);
 
   // Add prediction data
   const futureLabels = predictions.map(p => {
@@ -173,7 +175,7 @@ const Dashboard = ({ readings }) => {
     <div className="dashboard-view animate-stagger" style={{ padding: '3rem', maxWidth: '1400px', margin: '0 auto', animationDelay: '0.1s' }}>
       <header style={{ marginBottom: '3rem' }}>
         <h2 style={{ fontSize: '2.5rem', fontWeight: '800', margin: '0 0 0.5rem 0' }}>City Environment</h2>
-        <p style={{ color: 'var(--text-dim)', margin: 0 }}>Real-time spatial average across {readings.length} stations</p>
+        <p style={{ color: 'var(--text-dim)', margin: 0 }}>Real-time spatial average across {sensorReadings.length} stations</p>
       </header>
       
       <WeatherWidget />

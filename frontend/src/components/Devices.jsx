@@ -186,6 +186,9 @@ const Devices = ({ isAdmin = false, readings = [] }) => {
           {devices.map(device => {
             const isReference = device.device_id === 'denr_emb_x_reference_001';
             const latest = readings.find(r => r.device_id === device.device_id);
+            const pm25Value = isReference ? latest?.pm25_aqi : latest?.pm2_5_cal;
+            const pm25Unit = isReference ? 'AQI' : 'µg/m³';
+            const pm25Display = pm25Value != null ? (isReference ? pm25Value.toFixed(0) : pm25Value.toFixed(1)) : '---';
             const isOffline = device.status !== 'active' || (latest && (new Date() - new Date(latest.time)) > 600000);
             
             return (
@@ -227,7 +230,7 @@ const Devices = ({ isAdmin = false, readings = [] }) => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div style={{ padding: '0.8rem', background: 'var(--accent-bg)', borderRadius: '8px', border: '1px solid rgba(2, 239, 240, 0.1)' }}>
                     <div style={{ fontSize: '0.6rem', color: 'var(--accent)', fontWeight: 'bold', marginBottom: '0.2rem' }}>PM2.5</div>
-                    <div style={{ fontSize: '1.1rem', fontWeight: '800' }}>{latest?.pm2_5_cal?.toFixed(1) || '---'} <small style={{fontSize: '0.6rem', fontWeight: 'normal'}}>µg/m³</small></div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: '800' }}>{pm25Display} <small style={{fontSize: '0.6rem', fontWeight: 'normal'}}>{pm25Unit}</small></div>
                   </div>
                   <div style={{ padding: '0.8rem', background: 'var(--overlay-bg)', borderRadius: '8px', border: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', fontWeight: 'bold', marginBottom: '0.2rem' }}>TEMP</div>

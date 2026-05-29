@@ -96,7 +96,7 @@ const PipelineSVG = ({ devices, getReading, isActive }) => {
       {sensorPositions.map(({ device, cx, cy: sy }, idx) => {
         const active  = isActive(device.device_id);
         const reading = getReading(device.device_id);
-        const pm25    = reading?.pm2_5_cal ?? null;
+        const pm25    = device.device_id === EMBR_X_DEVICE_ID ? reading?.pm25_aqi ?? null : reading?.pm2_5_cal ?? null;
         const color   = active ? (getPaqiColor(pm25) || ACCENT) : 'var(--overlay-bg-hover)';
         const pathD   = curvePath(cx + SENSOR_W / 2, sy, INFRA.mqtt.x - NODE_W / 2, INFRA.mqtt.y);
 
@@ -139,7 +139,7 @@ const PipelineSVG = ({ devices, getReading, isActive }) => {
       {sensorPositions.map(({ device, cx, cy: sy }) => {
         const active  = isActive(device.device_id);
         const reading = getReading(device.device_id);
-        const pm25    = reading?.pm2_5_cal ?? null;
+        const pm25    = device.device_id === EMBR_X_DEVICE_ID ? reading?.pm25_aqi ?? null : reading?.pm2_5_cal ?? null;
         const isRef   = isRefNode(device.device_id);
         const color   = isRef ? REF_COLOR : active ? (getPaqiColor(pm25) || ACCENT) : 'var(--text-dim)';
         const rx = cx - SENSOR_W / 2;
@@ -186,7 +186,7 @@ const PipelineSVG = ({ devices, getReading, isActive }) => {
             <text x={cx} y={ry + SENSOR_H - 14} textAnchor="middle" dominantBaseline="middle"
               fill={isRef ? REF_COLOR : active ? '#22c55e' : '#ef4444'} fontSize={isRef ? 7 : 8} fontWeight="700" fontFamily="monospace">
               {isRef
-                ? (pm25 != null ? `REF ${pm25.toFixed(1)} µg/m³` : '⭐ REFERENCE')
+                ? (pm25 != null ? `REF ${pm25.toFixed(0)} AQI` : '⭐ REFERENCE')
                 : active ? `${pm25 != null ? pm25.toFixed(1) + ' µg/m³' : 'LIVE'}` : 'OFFLINE'
               }
             </text>

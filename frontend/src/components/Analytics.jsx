@@ -98,16 +98,22 @@ const Analytics = () => {
   }, [selectedDeviceId, range]);
 
   const selectedDevice = devices.find(d => d.device_id === selectedDeviceId);
+  const isReferenceDevice = selectedDevice?.device_id === 'denr_emb_x_reference_001';
+  const latestReading = readings[0] || {};
+  const displayedPm25 = isReferenceDevice ? latestReading.pm25_aqi : latestReading.pm2_5_cal;
+  const pm25Unit = isReferenceDevice ? 'AQI' : 'µg/m³';
 
-  const pastLabels = stats.map(s => {
+  const sortedStats = [...stats].sort((a, b) => new Date(a.bucket) - new Date(b.bucket));
+
+  const pastLabels = sortedStats.map(s => {
     const date = new Date(s.bucket);
     if (range === '24h') return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     if (range === '7d') return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit' });
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  }).reverse();
+  });
 
-  const pastPm25 = stats.map(s => s.avg_pm2_5).reverse();
-  const pastPm10 = stats.map(s => s.avg_pm10).reverse();
+  const pastPm25 = sortedStats.map(s => s.avg_pm2_5);
+  const pastPm10 = sortedStats.map(s => s.avg_pm10);
 
   // Add prediction data
   const futureLabels = predictions.map(p => {
@@ -264,9 +270,9 @@ const Analytics = () => {
             <div className="analytics-metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1.5rem', marginBottom: '2.5rem' }}>
               <div className="glass-panel" style={{ padding: '1.5rem' }}>
                 <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '0.8rem' }}>PM2.5</div>
-                <div style={{ fontSize: '2rem', fontWeight: '900', color: getAQIColor(readings[0]?.pm2_5_cal) }}>
-                  {readings[0]?.pm2_5_cal?.toFixed(1) || '---'}
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.3rem' }}>µg/m³</span>
+                <div style={{ fontSize: '2rem', fontWeight: '900', color: getAQIColor(displayedPm25) }}>
+                  {displayedPm25 != null ? (isReferenceDevice ? displayedPm25.toFixed(0) : displayedPm25.toFixed(1)) : '---'}
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.3rem' }}>{pm25Unit}</span>
                 </div>
               </div>
               <div className="glass-panel" style={{ padding: '1.5rem' }}>
@@ -379,7 +385,7 @@ const Analytics = () => {
                   <thead style={{ position: 'sticky', top: 0, background: 'var(--surface)', zIndex: 1 }}>
                     <tr style={{ fontSize: '0.75rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
                       <th style={{ padding: '1rem' }}>Timestamp</th>
-                      <th style={{ padding: '1rem' }}>PM2.5 (Cal)</th>
+                      <th style={{ padding: '1rem' }}>PM2.5 ({isReferenceDevice ? 'AQI' : 'Calibrated'})</th>
                       <th style={{ padding: '1rem' }}>PM10</th>
                       <th style={{ padding: '1rem' }}>Temp</th>
                       <th style={{ padding: '1rem' }}>Hum</th>
@@ -387,16 +393,21 @@ const Analytics = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {readings.map((r, i) => (
-                      <tr key={i} style={{ borderBottom: '1px solid var(--border)', fontSize: '0.85rem' }}>
-                        <td style={{ padding: '0.8rem 1rem' }}>{new Date(r.time).toLocaleString()}</td>
-                        <td style={{ padding: '0.8rem 1rem', color: getAQIColor(r.pm2_5_cal), fontWeight: 'bold' }}>{r.pm2_5_cal?.toFixed(2)}</td>
-                        <td style={{ padding: '0.8rem 1rem' }}>{r.pm10?.toFixed(2)}</td>
-                        <td style={{ padding: '0.8rem 1rem' }}>{r.temperature?.toFixed(1)}°C</td>
-                        <td style={{ padding: '0.8rem 1rem' }}>{r.humidity?.toFixed(1)}%</td>
-                        {isAdmin && <td style={{ padding: '0.8rem 1rem', color: '#10b981' }}>{r.rssi_dbm}</td>}
-                      </tr>
-                    ))}
+                    {readings.map((r, i) => {
+                      const rowPm25 = isReferenceDevice ? r.pm25_aqi : r.pm2_5_cal;
+                      return (
+                        <tr key={i} style={{ borderBottom: '1px solid var(--border)', fontSize: '0.85rem' }}>
+                          <td style={{ padding: '0.8rem 1rem' }}>{new Date(r.time).toLocaleString()}</td>
+                          <td style={{ padding: '0.8rem 1rem', color: getAQIColor(rowPm25), fontWeight: 'bold' }}>
+                            {rowPm25 != null ? (isReferenceDevice ? rowPm25.toFixed(0) : rowPm25.toFixed(2)) : '---'}
+                          </td>
+                          <td style={{ padding: '0.8rem 1rem' }}>{r.pm10?.toFixed(2)}</td>
+                          <td style={{ padding: '0.8rem 1rem' }}>{r.temperature?.toFixed(1)}°C</td>
+                          <td style={{ padding: '0.8rem 1rem' }}>{r.humidity?.toFixed(1)}%</td>
+                          {isAdmin && <td style={{ padding: '0.8rem 1rem', color: '#10b981' }}>{r.rssi_dbm}</td>}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

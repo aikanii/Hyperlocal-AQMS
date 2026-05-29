@@ -71,7 +71,7 @@ const MapView = ({ readings }) => {
 
   // Compute live analytics
   const analytics = useMemo(() => {
-    const validReadings = readings.filter(r => r && (now - new Date(r.time).getTime() < 300000));
+    const validReadings = readings.filter(r => r && r.device_id !== EMBR_X_DEVICE_ID && (now - new Date(r.time).getTime() < 300000));
     const count = validReadings.length;
     const pm25Avg = count > 0 ? (validReadings.reduce((sum, r) => sum + (r.pm2_5_cal || 0), 0) / count).toFixed(1) : '--';
     const status = getAQIInfo(pm25Avg === '--' ? null : Number(pm25Avg));
@@ -157,7 +157,7 @@ const MapView = ({ readings }) => {
         {/* Heatmap Overlay Layer via Concentric Gradients */}
         {showHeatmap && devices.map(device => {
           const reading = readings.find(r => r.device_id === device.device_id);
-          const pm25 = reading ? reading.pm2_5_cal : null;
+          const pm25 = reading ? (device.device_id === EMBR_X_DEVICE_ID ? reading.pm25_aqi : reading.pm2_5_cal) : null;
           if (pm25 === null) return null;
           
           const info = getAQIInfo(pm25);
@@ -176,7 +176,7 @@ const MapView = ({ readings }) => {
         {/* Physical Sensor Nodes */}
         {showSensors && devices.map(device => {
           const reading = readings.find(r => r.device_id === device.device_id);
-          const pm25 = reading ? reading.pm2_5_cal : null;
+          const pm25 = reading ? (device.device_id === EMBR_X_DEVICE_ID ? reading.pm25_aqi : reading.pm2_5_cal) : null;
           const info = getAQIInfo(pm25);
           const color = info.color;
           
@@ -209,7 +209,12 @@ const MapView = ({ readings }) => {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '1rem' }}>
                     <div className="glass-panel" style={{ padding: '0.6rem', textAlign: 'center', background: 'var(--overlay-bg)' }}>
                       <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginBottom: '0.2rem' }}>PM2.5</div>
-                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: color }}>{pm25 ? pm25.toFixed(1) : '---'}</div>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: color }}>
+                        {pm25 != null ? (device.device_id === EMBR_X_DEVICE_ID ? pm25.toFixed(0) : pm25.toFixed(1)) : '---'}
+                        <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.25rem' }}>
+                          {device.device_id === EMBR_X_DEVICE_ID ? 'AQI' : 'µg/m³'}
+                        </span>
+                      </div>
                     </div>
                     <div className="glass-panel" style={{ padding: '0.6rem', textAlign: 'center', background: 'var(--overlay-bg)' }}>
                       <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginBottom: '0.2rem' }}>PM10</div>
