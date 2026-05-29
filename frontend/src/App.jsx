@@ -241,6 +241,29 @@ const AppInner = () => {
         console.error('Error fetching initial data:', err);
       }
     };
+
+    const refreshExternalReference = async () => {
+      try {
+        const ext = await axios.get('/api/external/embrx/latest');
+        if (ext?.data && ext.data.device_id === EMBR_X_DEVICE_ID) {
+          setReadings(prev => {
+            const idx = prev.findIndex(r => r.device_id === EMBR_X_DEVICE_ID);
+            if (idx > -1) {
+              const updated = [...prev];
+              updated[idx] = ext.data;
+              return updated;
+            }
+            return [...prev, ext.data];
+          });
+        }
+      } catch (err) {
+        console.debug('[HY-AQMS] External EMBR-X refresh failed:', err.message);
+      }
+    };
+
+    fetchInitial();
+    const externalRefreshInterval = setInterval(refreshExternalReference, 300000); // refresh every 5 minutes
+    refreshExternalReference();
     fetchInitial();
 
     const socket = io(API_URL, {
@@ -346,6 +369,7 @@ const AppInner = () => {
     return () => {
       console.debug('[HY-AQMS] Cleaning up socket connection');
       clearInterval(pollInterval);
+      clearInterval(externalRefreshInterval);
       // Properly close the socket
       if (socketRef.current) {
         socketRef.current.disconnect();

@@ -30,13 +30,14 @@ const AccessDenied = () => (
 );
 
 // ── Custom Toggle Switch ──────────────────────────────────────────────────────
-const ToggleSwitch = ({ checked, onChange }) => (
+const ToggleSwitch = ({ checked, onChange, disabled }) => (
   <label style={{
     position: 'relative', display: 'inline-block',
-    width: '60px', height: '32px', cursor: 'pointer', flexShrink: 0,
+    width: '60px', height: '32px', cursor: disabled ? 'not-allowed' : 'pointer', flexShrink: 0,
+    opacity: disabled ? 0.55 : 1,
   }}>
     <input
-      type="checkbox" checked={checked} onChange={onChange}
+      type="checkbox" checked={checked} onChange={onChange} disabled={disabled}
       style={{ opacity: 0, width: 0, height: 0, position: 'absolute' }}
     />
     <span style={{
@@ -92,7 +93,7 @@ const SensorToggleCard = ({ device, enabled, stats, onToggle }) => {
             </div>
           )}
         </div>
-        <ToggleSwitch checked={!!enabled} onChange={onToggle} />
+        <ToggleSwitch checked={!!enabled} onChange={onToggle} disabled={isRef} />
       </div>
 
       {/* Status bar */}
@@ -119,6 +120,8 @@ const SensorToggleCard = ({ device, enabled, stats, onToggle }) => {
         }} />
         {hasError
           ? `ERROR: ${stats.error.slice(0, 36)}…`
+          : isRef
+          ? 'REFERENCE — LIVE'
           : enabled
           ? 'SIMULATING  —  LIVE'
           : 'IDLE  —  OFF'}
@@ -148,6 +151,7 @@ const SensorToggleCard = ({ device, enabled, stats, onToggle }) => {
 // ── Main Simulation Component ─────────────────────────────────────────────────
 const Simulation = () => {
   const { isAdmin } = useAuth();
+  const REF_DEVICE_ID = 'denr_emb_x_reference_001';
 
   // ── Core state ───────────────────────────────────────────────────────────────
   const [deviceId, setDeviceId]   = useState('');
@@ -182,7 +186,7 @@ const Simulation = () => {
 
     const injectAll = () => {
       // Stagger requests by 1 second per location to prevent burst limits
-      devices.forEach((device, index) => {
+      devices.filter(d => d.device_id !== REF_DEVICE_ID).forEach((device, index) => {
         setTimeout(async () => {
           try {
             const p = payloadRef.current;
@@ -225,7 +229,11 @@ const Simulation = () => {
       .then(res => {
         const devicesData = Array.isArray(res.data) ? res.data : [];
         setDevices(devicesData);
-        setDeviceId(prevId => !prevId && devicesData.length > 0 ? devicesData[0].device_id : prevId);
+        setDeviceId(prevId => {
+          if (prevId) return prevId;
+          const nonRef = devicesData.find(d => d.device_id !== REF_DEVICE_ID);
+          return nonRef ? nonRef.device_id : devicesData[0]?.device_id || '';
+        });
       })
       .catch(err => {
         addLog(`FAILED TO FETCH DEVICES: ${err.message}`, 'error');
@@ -255,6 +263,11 @@ const Simulation = () => {
   // ── Per-sensor toggle ────────────────────────────────────────────────────────
   const toggleSensor = (device) => {
     const { device_id } = device;
+    if (device_id === REF_DEVICE_ID) {
+      addLog('Reference node is always active and uses the live DENR AQI feed.', 'info');
+      return;
+    }
+
     const isOn = !!sensorEnabled[device_id];
 
     if (isOn) {
@@ -300,13 +313,13 @@ const Simulation = () => {
 
   const enableAll  = () => {
     // Stagger sensor activation by 2 seconds per device to prevent burst limits
-    devices.forEach((d, index) => {
+    devices.filter(d => d.device_id !== REF_DEVICE_ID).forEach((d, index) => {
       if (!sensorEnabled[d.device_id]) {
         setTimeout(() => toggleSensor(d), index * 2000);
       }
     });
   };
-  const disableAll = () => devices.forEach(d => { if (sensorEnabled[d.device_id])  toggleSensor(d); });
+  const disableAll = () => devices.filter(d => d.device_id !== REF_DEVICE_ID).forEach(d => { if (sensorEnabled[d.device_id]) toggleSensor(d); });
 
   // ── Manual single inject ─────────────────────────────────────────────────────
   const handleSimulate = async () => {
@@ -452,15 +465,18 @@ const Simulation = () => {
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(268px, 1fr))', gap: '1rem' }}>
-            {devices.map(device => (
-              <SensorToggleCard
-                key={device.device_id}
-                device={device}
-                enabled={!!sensorEnabled[device.device_id]}
-                stats={sensorStats[device.device_id]}
-                onToggle={() => toggleSensor(device)}
-              />
-            ))}
+            {devices.map(device => {
+              const isRefDevice = device.device_id === REF_DEVICE_ID;
+              return (
+                <SensorToggleCard
+                  key={device.device_id}
+                  device={device}
+                  enabled={isRefDevice || !!sensorEnabled[device.device_id]}
+                  stats={sensorStats[device.device_id]}
+                  onToggle={() => toggleSensor(device)}
+                />
+              );
+            })}
           </div>
         )}
       </div>
@@ -489,7 +505,7 @@ const Simulation = () => {
             >
               {devices.length === 0 && <option value="">Loading sensors…</option>}
               {devices.map(d => (
-                <option key={d.device_id} value={d.device_id} style={{ background: 'var(--surface)' }}>
+                <option key={d.device_id} value={d.device_id} style={{ background: 'var(--surface)' }} disabled={d.device_id === REF_DEVICE_ID}>
                   {d.name} ({d.device_id})
                 </option>
               ))}
