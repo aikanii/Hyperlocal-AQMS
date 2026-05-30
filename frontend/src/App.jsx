@@ -204,7 +204,7 @@ const AppInner = () => {
     { id: 'map',        label: '🗺️ AQI Map' },
     { id: 'devices',    label: '🔌 Devices' },
     ...(isAdmin ? [
-      { id: 'simulation', label: '🚀 Simulation' },
+      { id: 'simulation', label: '�️ Calibration Settings' },
       { id: 'dataflow',   label: '🔄 Pipeline' },
     ] : []),
     { id: 'docs',       label: '📚 Documentation' },

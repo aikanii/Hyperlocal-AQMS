@@ -17,7 +17,7 @@ const AccessDenied = () => (
     }}>🔒</div>
     <h2 style={{ margin: 0, fontSize: '1.8rem', fontWeight: '800' }}>Access Restricted</h2>
     <p style={{ margin: 0, color: 'var(--text-dim)', maxWidth: '380px', lineHeight: 1.6 }}>
-      The Mission Control simulation interface is available to administrators only.
+      The Calibration Settings interface is available to administrators only.
     </p>
     <div style={{
       padding: '0.6rem 1.4rem', borderRadius: '8px',
@@ -362,7 +362,7 @@ const Simulation = () => {
 
       {/* Header */}
       <header style={{ marginBottom: '2.5rem' }}>
-        <h2 style={{ fontSize: '2.2rem', fontWeight: '800', margin: '0 0 0.4rem 0' }}>Mission Control</h2>
+        <h2 style={{ fontSize: '2.2rem', fontWeight: '800', margin: '0 0 0.4rem 0' }}>Calibration Settings</h2>
         <p style={{ color: 'var(--text-dim)', margin: 0 }}>
           Payload laboratory &amp; per-sensor hardware emulation console
         </p>
