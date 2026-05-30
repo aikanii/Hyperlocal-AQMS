@@ -523,7 +523,7 @@ const AppInner = () => {
           {renderContent()}
           {isAdmin && (
             <div style={{ display: activeTab === 'simulation' ? 'block' : 'none', height: '100%' }}>
-              <Simulation />
+              <Simulation referenceReading={readings.find(r => r.device_id === EMBR_X_DEVICE_ID)} />
             </div>
           )}
         </div>

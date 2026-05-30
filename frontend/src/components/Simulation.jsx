@@ -149,7 +149,7 @@ const SensorToggleCard = ({ device, enabled, stats, onToggle }) => {
 };
 
 // ── Main Simulation Component ─────────────────────────────────────────────────
-const Simulation = () => {
+const Simulation = ({ referenceReading }) => {
   const { isAdmin } = useAuth();
   const REF_DEVICE_ID = 'denr_emb_x_reference_001';
 
@@ -179,6 +179,16 @@ const Simulation = () => {
     const intervals = sensorIntervals.current;
     return () => Object.values(intervals).forEach(clearInterval);
   }, []);
+
+  useEffect(() => {
+    if (referenceReading?.device_id === REF_DEVICE_ID) {
+      setPayload(prev => ({
+        ...prev,
+        temperature: referenceReading.temperature ?? prev.temperature,
+        humidity:    referenceReading.humidity ?? prev.humidity,
+      }));
+    }
+  }, [referenceReading]);
 
   // ── Auto-pilot: inject into ALL devices every 120 s (2 minutes) ───────────
   useEffect(() => {
@@ -521,9 +531,16 @@ const Simulation = () => {
                 </label>
                 <input
                   type="number" step="0.1"
-                  style={{ width: '100%', padding: '0.8rem', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text)', boxSizing: 'border-box' }}
+                  style={{
+                    width: '100%', padding: '0.8rem',
+                    background: key === 'temperature' || key === 'humidity' ? 'rgba(255,255,255,0.04)' : 'var(--panel)',
+                    border: '1px solid var(--border)', borderRadius: '8px',
+                    color: 'var(--text)', boxSizing: 'border-box',
+                    cursor: key === 'temperature' || key === 'humidity' ? 'not-allowed' : 'text'
+                  }}
                   value={payload[key]}
                   onChange={e => setPayload({ ...payload, [key]: parseFloat(e.target.value) || 0 })}
+                  disabled={key === 'temperature' || key === 'humidity'}
                 />
               </div>
             ))}
