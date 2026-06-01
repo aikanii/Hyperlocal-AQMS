@@ -3,10 +3,10 @@ CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
 CREATE TABLE IF NOT EXISTS readings (
   time        TIMESTAMPTZ NOT NULL,
   device_id   TEXT NOT NULL,
-  pm1_0       FLOAT, 
   pm2_5       FLOAT, 
   pm10        FLOAT,
   pm2_5_cal   FLOAT,
+  pm25_aqi    FLOAT,
   temperature FLOAT, 
   humidity    FLOAT,
   rssi_dbm    INT, 

@@ -10,6 +10,7 @@ import {
   normalizeReferenceReading,
   normalizeReadingsList,
 } from '../utils/referenceNode';
+import { calculateAQI, getAQICategory, getAQIColor } from '../utils/aqi';
 import ReferenceTimeline from './ReferenceTimeline';
 import axios from 'axios';
 import { Line } from 'react-chartjs-2';
@@ -18,21 +19,6 @@ import {
 } from 'chart.js';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
-
-// WHO/US-EPA Air Quality Index (PM2.5-based)
-const PAQI = [
-  { max: 50, color: 'var(--aqi-good)', label: 'Good' },
-  { max: 100, color: 'var(--aqi-moderate)', label: 'Moderate' },
-  { max: 150, color: 'var(--aqi-sensitive)', label: 'Sensitive' },
-  { max: 200, color: 'var(--aqi-unhealthy)', label: 'Unhealthy' },
-  { max: 300, color: 'var(--aqi-very-unhealthy)', label: 'Very Unhealthy' },
-  { max: Infinity, color: 'var(--aqi-hazardous)', label: 'Hazardous' },
-];
-
-const getAQIColor = (pm25) => {
-  if (pm25 === null || pm25 === undefined) return 'var(--text-dim)';
-  return (PAQI.find(t => pm25 <= t.max) || PAQI[PAQI.length - 1]).color;
-};
 
 const Analytics = ({ devices: devicesProp = [] }) => {
   const { isAdmin } = useAuth();
@@ -147,6 +133,7 @@ const Analytics = ({ devices: devicesProp = [] }) => {
   });
 
   const pastPm25 = sortedStats.map(s => s.avg_pm2_5);
+  const pastAqi = sortedStats.map(s => s.avg_aqi ?? (s.avg_pm2_5 ? calculateAQI(s.avg_pm2_5) : null));
   const pastPm10 = sortedStats.map(s => s.avg_pm10);
 
   // Add prediction data
@@ -158,6 +145,7 @@ const Analytics = ({ devices: devicesProp = [] }) => {
 
   // Pad arrays with nulls so they align on the X-axis
   const pm25Data = [...pastPm25, ...Array(futureLabels.length).fill(null)];
+  const aqiData = [...pastAqi, ...Array(futureLabels.length).fill(null)];
   const pm10Data = [...pastPm10, ...Array(futureLabels.length).fill(null)];
   const predictedPm25Data = pastPm25.length > 0
     ? [...Array(pastLabels.length - 1).fill(null), pastPm25[pastPm25.length - 1], ...futurePm25]
@@ -168,8 +156,8 @@ const Analytics = ({ devices: devicesProp = [] }) => {
     datasets: [
       {
         fill: true,
-        label: isRefSelected ? 'AQI (Historical)' : 'PM2.5 (Historical)',
-        data: pm25Data,
+        label: isRefSelected ? 'AQI (Historical)' : 'AQI (Historical)',
+        data: aqiData,
         borderColor: '#02EFF0',
         backgroundColor: 'rgba(2, 239, 240, 0.1)',
         borderWidth: 3,
@@ -177,6 +165,18 @@ const Analytics = ({ devices: devicesProp = [] }) => {
         pointRadius: 4,
         pointBackgroundColor: '#0F282F',
         pointBorderColor: '#02EFF0',
+      },
+      {
+        fill: true,
+        label: 'PM2.5 (μg/m³)',
+        data: pm25Data,
+        borderColor: '#10b981',
+        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+        borderWidth: 2,
+        tension: 0.4,
+        pointRadius: 3,
+        pointBackgroundColor: '#0F282F',
+        pointBorderColor: '#10b981',
       },
       {
         fill: false,
@@ -192,7 +192,7 @@ const Analytics = ({ devices: devicesProp = [] }) => {
       },
       {
         fill: true,
-        label: 'PM10 (Historical)',
+        label: 'PM10 (μg/m³)',
         data: pm10Data,
         borderColor: 'rgba(148, 163, 184, 0.6)',
         backgroundColor: 'rgba(148, 163, 184, 0.05)',
@@ -310,11 +310,19 @@ const Analytics = ({ devices: devicesProp = [] }) => {
             <div className="analytics-metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1.5rem', marginBottom: '2.5rem' }}>
               <div className="glass-panel" style={{ padding: '1.5rem' }}>
                 <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '0.8rem' }}>
-                  {isRefSelected ? 'AQI (24h)' : 'PM2.5'}
+                  AQI
                 </div>
-                <div style={{ fontSize: '2rem', fontWeight: '900', color: getAQIColor(displayedPm25) }}>
-                  {displayedPm25 != null ? (isRefSelected ? displayedPm25.toFixed(0) : displayedPm25.toFixed(1)) : '---'}
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.3rem' }}>{pm25Unit}</span>
+                <div style={{ fontSize: '2rem', fontWeight: '900', color: getAQIColor(displayedPm25 != null ? calculateAQI(displayedPm25) : null) }}>
+                  {displayedPm25 != null ? calculateAQI(displayedPm25).toFixed(0) : '---'}
+                </div>
+              </div>
+              <div className="glass-panel" style={{ padding: '1.5rem' }}>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '0.8rem' }}>
+                  PM2.5
+                </div>
+                <div style={{ fontSize: '2rem', fontWeight: '900', color: 'var(--text)' }}>
+                  {displayedPm25 != null ? displayedPm25.toFixed(1) : '---'}
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.3rem' }}>μg/m³</span>
                 </div>
               </div>
               <div className="glass-panel" style={{ padding: '1.5rem' }}>
@@ -437,8 +445,9 @@ const Analytics = ({ devices: devicesProp = [] }) => {
                   <thead style={{ position: 'sticky', top: 0, background: 'var(--surface)', zIndex: 1 }}>
                     <tr style={{ fontSize: '0.75rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
                       <th style={{ padding: '1rem' }}>Timestamp</th>
-                      <th style={{ padding: '1rem' }}>PM2.5 ({isRefSelected ? 'AQI' : 'Calibrated'})</th>
-                      <th style={{ padding: '1rem' }}>PM10</th>
+                      <th style={{ padding: '1rem' }}>AQI</th>
+                      <th style={{ padding: '1rem' }}>PM2.5 (μg/m³)</th>
+                      <th style={{ padding: '1rem' }}>PM10 (μg/m³)</th>
                       <th style={{ padding: '1rem' }}>Temp</th>
                       <th style={{ padding: '1rem' }}>Hum</th>
                       {isAdmin && <th style={{ padding: '1rem' }}>RSSI</th>}
@@ -447,11 +456,15 @@ const Analytics = ({ devices: devicesProp = [] }) => {
                   <tbody>
                     {tableReadings.map((r, i) => {
                       const rowPm25 = getDisplayPm25(r, selectedDeviceId);
+                      const rowAqi = rowPm25 != null ? calculateAQI(rowPm25) : null;
                       return (
                         <tr key={`${r.time}-${i}`} style={{ borderBottom: '1px solid var(--border)', fontSize: '0.85rem' }}>
                           <td style={{ padding: '0.8rem 1rem' }}>{new Date(r.time).toLocaleString()}</td>
-                          <td style={{ padding: '0.8rem 1rem', color: getAQIColor(rowPm25), fontWeight: 'bold' }}>
-                            {rowPm25 != null ? (isRefSelected ? rowPm25.toFixed(0) : rowPm25.toFixed(2)) : '---'}
+                          <td style={{ padding: '0.8rem 1rem', color: getAQIColor(rowAqi), fontWeight: 'bold' }}>
+                            {rowAqi != null ? rowAqi.toFixed(0) : '---'}
+                          </td>
+                          <td style={{ padding: '0.8rem 1rem', color: 'var(--text)' }}>
+                            {rowPm25 != null ? rowPm25.toFixed(2) : '---'}
                           </td>
                           <td style={{ padding: '0.8rem 1rem' }}>{r.pm10?.toFixed(2)}</td>
                           <td style={{ padding: '0.8rem 1rem' }}>{r.temperature?.toFixed(1)}°C</td>

@@ -73,12 +73,11 @@ const Dashboard = ({ readings }) => {
 
   const sensorReadings = readings.filter(r => r.device_id !== REFERENCE_DEVICE_ID);
   const liveAvg = sensorReadings.length > 0 ? {
-    pm1_0: sensorReadings.reduce((sum, r) => sum + (r.pm1_0 || 0), 0) / sensorReadings.length,
     pm2_5: sensorReadings.reduce((sum, r) => sum + (r.pm2_5_cal || 0), 0) / sensorReadings.length,
     pm10: sensorReadings.reduce((sum, r) => sum + (r.pm10 || 0), 0) / sensorReadings.length,
     temp: sensorReadings.reduce((sum, r) => sum + (r.temperature || 0), 0) / sensorReadings.length,
     hum: sensorReadings.reduce((sum, r) => sum + (r.humidity || 0), 0) / sensorReadings.length
-  } : { pm1_0: null, pm2_5: null, pm10: null, temp: null, hum: null };
+  } : { pm2_5: null, pm10: null, temp: null, hum: null };
 
   const aqiColor = getAQIColor(liveAvg.pm2_5);
   const sortedStats = [...stats].sort((a, b) => new Date(a.bucket) - new Date(b.bucket));
@@ -223,16 +222,8 @@ const Dashboard = ({ readings }) => {
       )}
       
       <div className="stat-grid animate-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '2rem', animationDelay: '0.2s' }}>
-        <div className="glass-panel hover-lift" style={{ padding: '1.5rem' }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1rem' }}>Ultrafine (PM1.0)</div>
-          <div style={{ fontSize: '2.8rem', fontWeight: '900', color: 'var(--text)', display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-            {liveAvg.pm1_0?.toFixed(1) || '---'}
-            <span style={{ fontSize: '1rem', color: 'var(--text-dim)', fontWeight: 'normal' }}>µg/m³</span>
-          </div>
-        </div>
-
         <div className="glass-panel hover-lift" style={{ padding: '1.5rem', boxShadow: `0 0 30px ${aqiColor}15`, borderTop: `4px solid ${aqiColor}` }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1rem' }}>Fine (PM2.5)</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1rem' }}>Fine Particulate (PM2.5)</div>
           <div style={{ fontSize: '2.8rem', fontWeight: '900', color: aqiColor, display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
             {liveAvg.pm2_5?.toFixed(1) || '---'}
             <span style={{ fontSize: '1rem', color: 'var(--text-dim)', fontWeight: 'normal' }}>µg/m³</span>

@@ -5,6 +5,7 @@ import L from 'leaflet';
 import axios from 'axios';
 import { REFERENCE_DEVICE_ID } from '../constants/referenceNode';
 import { getDisplayPm25, isReferenceDevice } from '../utils/referenceNode';
+import { calculateAQI } from '../utils/aqi';
 
 // WHO/US-EPA Air Quality Index (PM2.5-based)
 const PAQI = [
@@ -109,12 +110,12 @@ const MapView = ({ readings }) => {
         
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
           <div style={{ background: 'var(--overlay-bg)', padding: '1rem', borderRadius: '8px' }}>
-            <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginBottom: '0.5rem', letterSpacing: '1px', fontWeight: 'bold' }}>AVG PM2.5</div>
-            <div style={{ fontSize: '1.6rem', color: analytics.status.color, fontWeight: 'bold' }}>{analytics.pm25Avg} <span style={{fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'normal'}}>µg</span></div>
+            <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginBottom: '0.5rem', letterSpacing: '1px', fontWeight: 'bold' }}>AVG AQI</div>
+            <div style={{ fontSize: '1.6rem', color: analytics.status.color, fontWeight: 'bold' }}>{analytics.pm25Avg === '--' ? '--' : calculateAQI(Number(analytics.pm25Avg)).toFixed(0)}</div>
           </div>
           <div style={{ background: 'var(--overlay-bg)', padding: '1rem', borderRadius: '8px' }}>
-            <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginBottom: '0.5rem', letterSpacing: '1px', fontWeight: 'bold' }}>ACTIVE NODES</div>
-            <div style={{ fontSize: '1.6rem', color: 'var(--text)', fontWeight: 'bold' }}>{analytics.count} <span style={{fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'normal'}}>/ {devices.length}</span></div>
+            <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginBottom: '0.5rem', letterSpacing: '1px', fontWeight: 'bold' }}>AVG PM2.5</div>
+            <div style={{ fontSize: '1.6rem', color: 'var(--text)', fontWeight: 'bold' }}>{analytics.pm25Avg} <span style={{fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'normal'}}>µg/m³</span></div>
           </div>
         </div>
 
@@ -207,23 +208,27 @@ const MapView = ({ readings }) => {
                     </div>
                   </div>
                   
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '1rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem', marginBottom: '1rem' }}>
+                    <div className="glass-panel" style={{ padding: '0.6rem', textAlign: 'center', background: 'var(--overlay-bg)' }}>
+                      <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginBottom: '0.2rem' }}>AQI</div>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: info.color }}>
+                        {pm25 != null ? calculateAQI(pm25).toFixed(0) : '---'}
+                      </div>
+                    </div>
                     <div className="glass-panel" style={{ padding: '0.6rem', textAlign: 'center', background: 'var(--overlay-bg)' }}>
                       <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginBottom: '0.2rem' }}>PM2.5</div>
-                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: color }}>
-                        {pm25 != null ? (isReferenceDevice(device.device_id) ? pm25.toFixed(0) : pm25.toFixed(1)) : '---'}
-                        <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.25rem' }}>
-                          {isReferenceDevice(device.device_id) ? 'AQI' : 'µg/m³'}
-                        </span>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: 'var(--text)' }}>
+                        {pm25 != null ? pm25.toFixed(1) : '---'}
+                        <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.25rem' }}>µg/m³</span>
                       </div>
                     </div>
                     <div className="glass-panel" style={{ padding: '0.6rem', textAlign: 'center', background: 'var(--overlay-bg)' }}>
                       <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginBottom: '0.2rem' }}>PM10</div>
-                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>{reading?.pm10 ? reading.pm10.toFixed(1) : '---'}</div>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>{reading?.pm10 ? reading.pm10.toFixed(1) : '---'}<span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.25rem' }}>µg/m³</span></div>
                     </div>
                     <div className="glass-panel" style={{ padding: '0.6rem', textAlign: 'center', background: 'var(--overlay-bg)' }}>
                       <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginBottom: '0.2rem' }}>TEMP</div>
-                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>{reading?.temperature ? reading.temperature.toFixed(1) + '°' : '---'}</div>
+                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>{reading?.temperature ? reading.temperature.toFixed(1) + '°C' : '---'}</div>
                     </div>
                     <div className="glass-panel" style={{ padding: '0.6rem', textAlign: 'center', background: 'var(--overlay-bg)' }}>
                       <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginBottom: '0.2rem' }}>HUMIDITY</div>

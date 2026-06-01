@@ -134,7 +134,6 @@ const Calibration = () => {
 
   const [devices, setDevices] = useState([]);
   const [payload, setPayload] = useState({
-    pm1_0: 10,
     pm2_5: 0,
     pm10: 45,
     temperature: 28.5,
@@ -190,7 +189,6 @@ const Calibration = () => {
 
     return {
       device_id,
-      pm1_0: Math.max(0, vary(p.pm1_0, 2)),
       pm2_5: Math.max(0, vary(calibratedPm25, 5)),
       pm10: Math.max(0, vary(p.pm10, 8)),
       temperature: vary(p.temperature, 0.8),
@@ -458,7 +456,7 @@ const Calibration = () => {
           </div>
 
           <div style={{ padding: '1rem', background: 'var(--overlay-bg)', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '0.75rem', color: 'var(--text-dim)', lineHeight: 1.6 }}>
-            <strong style={{ color: 'var(--accent)' }}>Internal buffer fields</strong> (pm1.0, pm10, rssi, battery) vary slightly per inject for realism.
+            <strong style={{ color: 'var(--accent)' }}>Internal buffer fields</strong> (pm10, rssi, battery) vary slightly per inject for realism.
             PM2.5 base value always matches Reference AQI: <strong style={{ color: '#f59e0b' }}>{pm25Display}</strong>
           </div>
         </div>
