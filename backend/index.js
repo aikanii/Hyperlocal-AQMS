@@ -11,6 +11,73 @@ const bcrypt = require('bcryptjs');
 const { Server } = require('socket.io');
 const cheerio = require('cheerio');
 
+// ── AQI CALCULATION SERVICE ──────────────────────────────────────────────────
+// WHO/US-EPA Air Quality Index (PM2.5-based)
+// Converts PM2.5 concentration (µg/m³) to AQI value (0-500+)
+
+const AQI_BREAKPOINTS = [
+  { max: 50, aqi_max: 50, label: 'Good', color: '#00E400', description: 'Air quality is satisfactory.' },
+  { max: 100, aqi_max: 100, label: 'Moderate', color: '#FFFF00', description: 'Acceptable quality; some concern for very sensitive groups.' },
+  { max: 150, aqi_max: 150, label: 'Unhealthy for Sensitive Groups', color: '#FF7E00', description: 'Sensitive groups experience health effects.' },
+  { max: 200, aqi_max: 200, label: 'Unhealthy', color: '#FF0000', description: 'Everyone begins to experience health effects.' },
+  { max: 300, aqi_max: 300, label: 'Very Unhealthy', color: '#8F3F97', description: 'Health alert: serious health effects for everyone.' },
+  { max: Infinity, aqi_max: 500, label: 'Hazardous', color: '#7E0023', description: 'Health warning of emergency conditions. Avoid outdoor activity.' }
+];
+
+const calculateAQI = (pm25) => {
+  if (pm25 === null || pm25 === undefined || !Number.isFinite(pm25)) {
+    return null;
+  }
+
+  // Find the appropriate breakpoint
+  let breakpoint = null;
+  for (const bp of AQI_BREAKPOINTS) {
+    if (pm25 <= bp.max) {
+      breakpoint = bp;
+      break;
+    }
+  }
+
+  if (!breakpoint) return null;
+
+  // Linear interpolation between breakpoints
+  let prevBp = AQI_BREAKPOINTS[0];
+  for (let i = 0; i < AQI_BREAKPOINTS.length - 1; i++) {
+    if (pm25 <= AQI_BREAKPOINTS[i].max) {
+      prevBp = i > 0 ? AQI_BREAKPOINTS[i - 1] : AQI_BREAKPOINTS[0];
+      breakpoint = AQI_BREAKPOINTS[i];
+      break;
+    }
+    prevBp = AQI_BREAKPOINTS[i];
+  }
+
+  const pm25_low = prevBp.max - (AQI_BREAKPOINTS[AQI_BREAKPOINTS.indexOf(prevBp) > 0 ? AQI_BREAKPOINTS.indexOf(prevBp) - 1 : 0].max || 0);
+  const pm25_high = breakpoint.max;
+  const aqi_low = prevBp.aqi_max - 50;
+  const aqi_high = breakpoint.aqi_max;
+
+  const aqi = ((aqi_high - aqi_low) / (pm25_high - pm25_low)) * (pm25 - pm25_low) + aqi_low;
+  return Math.round(Math.max(0, aqi));
+};
+
+const getAQICategory = (aqi) => {
+  if (aqi === null || aqi === undefined) return null;
+  for (const bp of AQI_BREAKPOINTS) {
+    if (aqi <= bp.aqi_max) {
+      return {
+        label: bp.label,
+        color: bp.color,
+        description: bp.description
+      };
+    }
+  }
+  return {
+    label: 'Hazardous',
+    color: '#7E0023',
+    description: 'Health warning of emergency conditions.'
+  };
+};
+
 const app = express();
 
 app.set('trust proxy', 1);
@@ -376,14 +443,20 @@ const processReferenceScraperPoll = async () => {
     const recordedAt = timestamp;
 
     // ── 4. Persist to database ─────────────────────────────────────────────
+    // For reference node, pm25_aqi is the AQI value (not concentration)
+    // Store it as both pm2_5_cal (for compatibility) and pm25_aqi
+    const pm2_5_concentration = reading.pm25_aqi; // The reference API provides AQI directly
+    const pm25_aqi = reading.pm25_aqi;
+    
     await pool.query(
-      `INSERT INTO readings (time, device_id, pm2_5, pm2_5_cal, temperature, humidity)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
+      `INSERT INTO readings (time, device_id, pm2_5, pm2_5_cal, pm25_aqi, temperature, humidity)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         recordedAt,
         REF_DEVICE_ID,
-        pm25Value,
-        pm25Value,
+        pm2_5_concentration,
+        pm2_5_concentration,
+        pm25_aqi,
         reading.temperature ?? null,
         reading.humidity    ?? null,
       ]
@@ -393,9 +466,9 @@ const processReferenceScraperPoll = async () => {
     const cachedReading = {
       time:        recordedAt,
       device_id:   REF_DEVICE_ID,
-      pm2_5:       pm25Value,
-      pm25_aqi:    pm25Value,
-      pm2_5_cal:   pm25Value,
+      pm2_5:       pm2_5_concentration,
+      pm25_aqi:    pm25_aqi,
+      pm2_5_cal:   pm2_5_concentration,
       temperature: reading.temperature ?? null,
       humidity:    reading.humidity    ?? null,
       source_time: reading.time,
@@ -693,7 +766,6 @@ mqttClient.on('message', async (topic, message) => {
     const topicParts = topic.split('/');
     const deviceId = topicParts[2];
     
-    const pm1_0 = payload.pm1_0 !== undefined ? Number(payload.pm1_0) : null;
     const pm2_5 = payload.pm2_5 !== undefined ? Number(payload.pm2_5) : null;
     const pm10 = payload.pm10 !== undefined ? Number(payload.pm10) : null;
     const temperature = payload.temperature !== undefined ? Number(payload.temperature) : null;
@@ -718,21 +790,25 @@ mqttClient.on('message', async (topic, message) => {
     }
 
     const timestamp = new Date();
+    
+    // Calculate AQI from calibrated PM2.5 concentration
+    const pm25_aqi = pm2_5_cal !== null ? calculateAQI(pm2_5_cal) : null;
+    
     const query = `
       INSERT INTO readings (
-        time, device_id, pm1_0, pm2_5, pm10, pm2_5_cal, temperature, humidity, rssi_dbm, battery_mv
+        time, device_id, pm2_5, pm10, pm2_5_cal, pm25_aqi, temperature, humidity, rssi_dbm, battery_mv
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     `;
     const values = [
       timestamp, deviceId,
-      pm1_0, pm2_5, pm10,
-      pm2_5_cal, temperature, humidity,
+      pm2_5, pm10,
+      pm2_5_cal, pm25_aqi, temperature, humidity,
       rssi, battery
     ];
     
     try {
       await pool.query(query, values);
-      console.log(`[DB:${deviceId}] ✓ Reading inserted`);
+      console.log(`[DB:${deviceId}] ✓ Reading inserted (PM2.5: ${pm2_5_cal}, AQI: ${pm25_aqi})`);
     } catch (dbErr) {
       console.error(`[DB:${deviceId}] ✗ Insert failed:`, dbErr.message);
       // Don't re-throw - log and continue so socket broadcast and cache still happen
@@ -741,8 +817,8 @@ mqttClient.on('message', async (topic, message) => {
     // Broadcast via Socket.IO with error handling
     const readingData = {
       time: timestamp, device_id: deviceId,
-      pm1_0: payload.pm1_0, pm2_5: payload.pm2_5, pm10: payload.pm10,
-      pm2_5_cal: pm2_5_cal, temperature: payload.temperature,
+      pm2_5: payload.pm2_5, pm10: payload.pm10,
+      pm2_5_cal: pm2_5_cal, pm25_aqi: pm25_aqi, temperature: payload.temperature,
       humidity: payload.humidity, rssi_dbm: payload.rssi_dbm, battery_mv: payload.battery_mv
     };
     
@@ -993,9 +1069,9 @@ app.get('/api/stats/city', async (req, res) => {
     const query = `
       SELECT 
         time_bucket('${bucket}', time) AS bucket,
-        ROUND(AVG(pm1_0)::numeric, 2) AS avg_pm1_0,
         ROUND(AVG(pm2_5_cal)::numeric, 2) AS avg_pm2_5,
         ROUND(AVG(pm10)::numeric, 2) AS avg_pm10,
+        ROUND(AVG(pm25_aqi)::numeric, 2) AS avg_aqi,
         ROUND(AVG(temperature)::numeric, 2) AS avg_temperature,
         ROUND(AVG(humidity)::numeric, 2) AS avg_humidity
       FROM readings
@@ -1029,9 +1105,9 @@ app.get('/api/stats/device/:id', async (req, res) => {
     const query = `
       SELECT 
         time_bucket('${bucket}', time) AS bucket,
-        ROUND(AVG(pm1_0)::numeric, 2) AS avg_pm1_0,
         ROUND(AVG(pm2_5_cal)::numeric, 2) AS avg_pm2_5,
         ROUND(AVG(pm10)::numeric, 2) AS avg_pm10,
+        ROUND(AVG(pm25_aqi)::numeric, 2) AS avg_aqi,
         ROUND(AVG(temperature)::numeric, 2) AS avg_temperature,
         ROUND(AVG(humidity)::numeric, 2) AS avg_humidity
       FROM readings
@@ -1050,7 +1126,7 @@ app.get('/api/stats/device/:id', async (req, res) => {
 app.get('/api/export', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { device_id, start, end } = req.query;
-    let query = 'SELECT time, device_id, pm1_0, pm2_5, pm10, pm2_5_cal, temperature, humidity, rssi_dbm, battery_mv FROM readings WHERE 1=1';
+    let query = 'SELECT time, device_id, pm2_5, pm10, pm2_5_cal, pm25_aqi, temperature, humidity, rssi_dbm, battery_mv FROM readings WHERE 1=1';
     const values = [];
     let idx = 1;
 
@@ -1130,7 +1206,7 @@ app.patch('/api/devices/:id', authenticateToken, async (req, res) => {
 });
 // --- Injection Endpoint (Simulate Sensor Payload) ---
 app.post('/api/sim/inject', simLimiter, async (req, res) => {
-  const { device_id, pm1_0, pm2_5, pm10, temperature, humidity, rssi_dbm, battery_mv } = req.body;
+  const { device_id, pm2_5, pm10, temperature, humidity, rssi_dbm, battery_mv } = req.body;
   
   if (!device_id) {
     console.error('[INJECT] ✗ Missing device_id');
@@ -1143,7 +1219,7 @@ app.post('/api/sim/inject', simLimiter, async (req, res) => {
   }
 
   const payload = JSON.stringify({
-    pm1_0, pm2_5, pm10, temperature, humidity, rssi_dbm, battery_mv
+    pm2_5, pm10, temperature, humidity, rssi_dbm, battery_mv
   });
 
   const topic = `aqms/indoor/${device_id}/data`;

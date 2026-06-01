@@ -213,7 +213,7 @@ const Devices = ({ isAdmin = false, readings = [] }) => {
 
                 {/* Sensor Suite Icons */}
                 <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', padding: '1rem', background: 'var(--panel)', borderRadius: '12px', border: '1px solid var(--border)' }}>
-                  <div title="Particulate Matter (PM1, PM2.5, PM10)" style={{ flex: 1, textAlign: 'center' }}>
+                  <div title="Particulate Matter (PM2.5, PM10)" style={{ flex: 1, textAlign: 'center' }}>
                     <div style={{ fontSize: '1.2rem', marginBottom: '0.4rem' }}>🌫️</div>
                     <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', fontWeight: 'bold' }}>PM SUITE</div>
                   </div>

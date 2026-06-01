@@ -2,6 +2,22 @@ import { REFERENCE_DEVICE_ID, MAX_REFERENCE_TIMELINE_POINTS } from '../constants
 
 export const isReferenceDevice = (deviceId) => deviceId === REFERENCE_DEVICE_ID;
 
+/** Get AQI value from reading (prefer pm25_aqi field). */
+export const getAQIValue = (reading) => {
+  if (!reading) return null;
+  const v = reading.pm25_aqi;
+  if (v == null || !Number.isFinite(Number(v))) return null;
+  return Number(v);
+};
+
+/** Get PM2.5 concentration from reading (µg/m³). */
+export const getPM25Concentration = (reading) => {
+  if (!reading) return null;
+  const v = reading.pm2_5_cal ?? reading.pm2_5;
+  if (v == null || !Number.isFinite(Number(v))) return null;
+  return Number(v);
+};
+
 /** Canonical AQI value for the reference node (EPA index from BPIT feed). */
 export const getReferenceAqi = (reading) => {
   if (!reading) return null;

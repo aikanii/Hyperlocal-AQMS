@@ -157,7 +157,7 @@ const Calibration = ({ referenceReading }) => {
   const [deviceId, setDeviceId]   = useState('');
   const [devices,  setDevices]    = useState([]);
   const [payload,  setPayload]    = useState({
-    pm1_0: 10, pm2_5: 25.5, pm10: 45,
+    pm2_5: 25.5, pm10: 45,
     temperature: 28.5, humidity: 65,
     rssi_dbm: -65, battery_mv: 4100,
   });
@@ -203,7 +203,6 @@ const Calibration = ({ referenceReading }) => {
             const vary = (base, d) => Number((base + (Math.random() * d * 2 - d)).toFixed(2));
             const res = await axios.post('/api/sim/inject', {
               device_id:   device.device_id,
-              pm1_0:       Math.max(0, vary(p.pm1_0, 2)),
               pm2_5:       Math.max(0, vary(p.pm2_5, 5)),
               pm10:        Math.max(0, vary(p.pm10, 8)),
               temperature: vary(p.temperature, 0.8),
@@ -275,7 +274,6 @@ const Calibration = ({ referenceReading }) => {
 
     return {
       device_id,
-      pm1_0:       Math.max(0, vary(p.pm1_0, 2)),
       pm2_5:       Math.max(0, vary(calibratedPm25, 5)),
       pm10:        Math.max(0, vary(p.pm10, 8)),
       temperature: vary(p.temperature, 0.8),
