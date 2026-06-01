@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { getDisplayPm25, isReferenceDevice } from '../utils/referenceNode';
 
 // WHO/US-EPA Air Quality Index (PM2.5-based)
 const PAQI = [
@@ -17,8 +18,8 @@ const getPaqiColor = (pm25) => {
 
 const ACCENT = '#02EFF0';
 const REF_COLOR = '#f59e0b';
-const DENR_DEVICE_ID = 'denr_emb_x_reference_001';
-const isRefNode = (deviceId) => deviceId === DENR_DEVICE_ID;
+
+const isRefNode = (deviceId) => isReferenceDevice(deviceId);
 const NODE_W = 92;
 const NODE_H = 60;
 
@@ -96,7 +97,7 @@ const PipelineSVG = ({ devices, getReading, isActive }) => {
       {sensorPositions.map(({ device, cx, cy: sy }, idx) => {
         const active  = isActive(device.device_id);
         const reading = getReading(device.device_id);
-        const pm25    = device.device_id === DENR_DEVICE_ID ? reading?.pm25_aqi ?? null : reading?.pm2_5_cal ?? null;
+        const pm25    = getDisplayPm25(reading, device.device_id);
         const color   = active ? (getPaqiColor(pm25) || ACCENT) : 'var(--overlay-bg-hover)';
         const pathD   = curvePath(cx + SENSOR_W / 2, sy, INFRA.mqtt.x - NODE_W / 2, INFRA.mqtt.y);
 
@@ -139,7 +140,7 @@ const PipelineSVG = ({ devices, getReading, isActive }) => {
       {sensorPositions.map(({ device, cx, cy: sy }) => {
         const active  = isActive(device.device_id);
         const reading = getReading(device.device_id);
-        const pm25    = device.device_id === DENR_DEVICE_ID ? reading?.pm25_aqi ?? null : reading?.pm2_5_cal ?? null;
+        const pm25    = getDisplayPm25(reading, device.device_id);
         const isRef   = isRefNode(device.device_id);
         const color   = isRef ? REF_COLOR : active ? (getPaqiColor(pm25) || ACCENT) : 'var(--text-dim)';
         const rx = cx - SENSOR_W / 2;
@@ -483,7 +484,7 @@ const DataFlow = ({ readings }) => {
           {devices.map(device => {
             const active  = isActive(device.device_id);
             const reading = getReading(device.device_id);
-            const pm25    = reading?.pm2_5_cal ?? null;
+            const pm25    = getDisplayPm25(reading, device.device_id);
             const color   = active ? (getPaqiColor(pm25) || ACCENT) : 'var(--text-dim)';
             return (
               <SensorCard

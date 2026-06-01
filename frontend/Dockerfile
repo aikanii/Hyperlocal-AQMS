@@ -1,26 +1,31 @@
-# Stage 1: Build React Dashboard
-FROM node:20-alpine as build
+# Stage 1: Build React dashboard (Vite)
+FROM node:20-alpine AS build
+
 WORKDIR /app
-COPY package*.json ./
-RUN npm install
+
+# Install dependencies (lockfile required for reproducible CI builds)
+COPY package.json package-lock.json ./
+RUN npm ci
+
 COPY . .
+
+# Production bundle (needs devDependencies from npm ci above)
+ENV NODE_ENV=production
+ENV NODE_OPTIONS=--max-old-space-size=4096
 RUN npm run build
 
-# Stage 2: Serve with Nginx + SSL Logic
+# Stage 2: Serve with Nginx + SSL
 FROM nginx:alpine
+
 RUN apk add --no-cache openssl
 
-# Copy the built React app to Nginx default public directory
 COPY --from=build /app/dist /usr/share/nginx/html
-
-# Copy our custom Nginx config for SSL/API/WS (as a template for environment variables)
 COPY nginx.conf /etc/nginx/templates/default.conf.template
-
-# Copy entrypoint script for automatic SSL generation
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
 
-EXPOSE 80
-EXPOSE 443
+# Normalize Windows CRLF line endings if present
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+
+EXPOSE 80 443
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

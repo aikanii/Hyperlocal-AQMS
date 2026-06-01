@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import io from 'socket.io-client';
+import { useAuth } from '../contexts/AuthContext';
+import { useReadings } from '../contexts/ReadingsContext';
+import { downloadDataset } from '../utils/exportDataset';
+import { REFERENCE_DEVICE_ID } from '../constants/referenceNode';
+import { getDisplayPm25, getPm25Unit } from '../utils/referenceNode';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler
@@ -27,6 +32,9 @@ const getPAQI = (pm25) => {
 const getAQIColor = (pm25) => getPAQI(pm25).color;
 
 const Dashboard = ({ readings }) => {
+  const { isAdmin } = useAuth();
+  const { referenceReading } = useReadings();
+  const refAqi = getDisplayPm25(referenceReading, REFERENCE_DEVICE_ID);
   const [stats, setStats] = useState([]);
   const [predictions, setPredictions] = useState([]);
   const [range, setRange] = useState('24h');
@@ -63,7 +71,7 @@ const Dashboard = ({ readings }) => {
     return () => socket.disconnect();
   }, [range]);
 
-  const sensorReadings = readings.filter(r => r.device_id !== 'denr_emb_x_reference_001');
+  const sensorReadings = readings.filter(r => r.device_id !== REFERENCE_DEVICE_ID);
   const liveAvg = sensorReadings.length > 0 ? {
     pm1_0: sensorReadings.reduce((sum, r) => sum + (r.pm1_0 || 0), 0) / sensorReadings.length,
     pm2_5: sensorReadings.reduce((sum, r) => sum + (r.pm2_5_cal || 0), 0) / sensorReadings.length,
@@ -183,6 +191,36 @@ const Dashboard = ({ readings }) => {
       </header>
       
       <WeatherWidget />
+
+      {refAqi != null && (
+        <div
+          className="glass-panel hover-lift"
+          style={{
+            padding: '1.5rem',
+            marginBottom: '2rem',
+            border: '1px solid rgba(245, 158, 11, 0.4)',
+            background: 'rgba(245, 158, 11, 0.06)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '1rem',
+          }}
+        >
+          <div>
+            <div style={{ fontSize: '0.75rem', color: '#f59e0b', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '0.5rem' }}>
+              DENR-EMB Reference Node
+            </div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-dim)' }}>
+              Live 24h AQI from BPIT EMBRX — synchronized across map, analytics, and devices
+            </div>
+          </div>
+          <div style={{ fontSize: '2.5rem', fontWeight: '900', color: getAQIColor(refAqi) }}>
+            {refAqi.toFixed(0)}
+            <span style={{ fontSize: '0.9rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.35rem' }}>{getPm25Unit(REFERENCE_DEVICE_ID)}</span>
+          </div>
+        </div>
+      )}
       
       <div className="stat-grid animate-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '2rem', animationDelay: '0.2s' }}>
         <div className="glass-panel hover-lift" style={{ padding: '1.5rem' }}>
@@ -290,10 +328,17 @@ const Dashboard = ({ readings }) => {
               </div>
             </div>
 
-            <a href="/api/export" download="HY-AQMS-Dataset.csv" className="glass-panel hover-lift" style={{ padding: '1.5rem', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', textDecoration: 'none', background: 'var(--accent)', color: '#0F282F', cursor: 'pointer', transition: 'all 0.3s ease' }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginBottom: '0.5rem'}}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-              <div style={{ fontSize: '0.8rem', fontWeight: '800', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Export<br/>Dataset</div>
-            </a>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => downloadDataset('', 'HY-AQMS-Dataset.csv')}
+                className="glass-panel hover-lift"
+                style={{ padding: '1.5rem', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: 'var(--accent)', color: '#0F282F', cursor: 'pointer', transition: 'all 0.3s ease', border: 'none', font: 'inherit' }}
+              >
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginBottom: '0.5rem'}}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                <div style={{ fontSize: '0.8rem', fontWeight: '800', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Export<br/>Dataset</div>
+              </button>
+            )}
           </div>
         </div>
       </div>

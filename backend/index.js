@@ -9,6 +9,7 @@ const redis = require('redis');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { Server } = require('socket.io');
+const cheerio = require('cheerio');
 
 const app = express();
 
@@ -108,38 +109,64 @@ const ensurePredictionsUniqueIndex = async () => {
 };
 ensurePredictionsUniqueIndex();
 
-const EMBR_X_DEVICE_ID = 'denr_emb_x_reference_001';
-const EMBR_X_API_URL = 'https://api.bpit-inc.com/embrx/l';
-const EMBR_X_STATION_ID = 'Iligan City';
-const EMBR_X_POLL_INTERVAL_MS = 5 * 60 * 1000; // poll every 5 minutes
-let embrxPollTimer = null;
+// ── REFERENCE NODE — BPIT EMBRX JSON API POLLER ──────────────────────────────
+//
+// The reference node data is sourced from the BPIT EMBRX JSON API:
+//   https://api.bpit-inc.com/embrx/l
+//
+// The webpage at https://app.bpit-inc.com/iliganstation is a React SPA that
+// visualises the same API data.  The element:
+//   <div class="_aqidata_1ezxc_116 _flex-box-item_1ezxc_17">101</div>
+// displays pm25AQI24hr (24-hour rolling average) from the JSON response.
+//
+// We poll the JSON API directly — it is lighter, CORS-friendly, and produces
+// the same value shown on the webpage.
+//
+// REFERENCE_URL in .env is used to document/override the API endpoint.
+// If not set, the default https://api.bpit-inc.com/embrx/l is used.
 
+const REF_DEVICE_ID        = 'denr_emb_x_reference_001';
+const EMBR_X_DEVICE_ID    = REF_DEVICE_ID;
+const REF_STATION_ID       = 'Iligan City';
+const REF_DEFAULT_API_URL  = 'https://api.bpit-inc.com/embrx/l';
+const REF_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5-minute cadence
+const REF_SCRAPE_TIMEOUT   = 10000;          // 10 s fetch timeout
+let   refPollTimer         = null;
+
+/** Ensure reference rows expose pm25_aqi for all API consumers (DB stores AQI in pm2_5_cal). */
+const normalizeReferenceRow = (row) => {
+  if (!row || row.device_id !== REF_DEVICE_ID) return row;
+  const aqi = row.pm25_aqi ?? row.pm2_5_cal ?? row.pm2_5;
+  if (aqi == null || !Number.isFinite(Number(aqi))) return row;
+  const n = Number(aqi);
+  return { ...row, pm25_aqi: n, pm2_5_cal: row.pm2_5_cal ?? n };
+};
+
+const normalizeReferenceRows = (rows) =>
+  Array.isArray(rows) ? rows.map(normalizeReferenceRow) : rows;
+
+/**
+ * Safely parse a string into a finite number, stripping commas.
+ * Returns null if the result is not a finite number.
+ */
 const parseNumber = (value) => {
   if (value === undefined || value === null || value === '') return null;
-  const normalized = String(value).replace(/,/g, '');
+  const normalized = String(value).replace(/,/g, '').trim();
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const parseEmbrxTimestamp = (payload) => {
-  if (payload && typeof payload.date === 'string') {
-    const normalized = payload.date.trim().replace(' ', 'T');
-    const date = new Date(normalized);
-    if (!Number.isNaN(date.getTime())) {
-      return date;
-    }
-  }
-  return new Date();
-};
-
-const ensureEmbrxDeviceRecord = async () => {
+/**
+ * Ensure the Reference Node device row exists in the devices table.
+ */
+const ensureRefDeviceRecord = async () => {
   try {
     await pool.query(
       `INSERT INTO devices (device_id, name, lat, lng, status, region, calibration_coefficients)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (device_id) DO NOTHING`,
       [
-        EMBR_X_DEVICE_ID,
+        REF_DEVICE_ID,
         'DENR-EMB X Reference Grade Air Monitor',
         8.237232,
         124.252956,
@@ -148,13 +175,16 @@ const ensureEmbrxDeviceRecord = async () => {
         JSON.stringify({ pm2_5_slope: 1.0, pm2_5_intercept: 0.0 }),
       ]
     );
-    console.log('[EMBRX] ✓ External device record ensured in devices table');
+    console.log('[REF] ✓ Reference device record ensured in devices table');
   } catch (err) {
-    console.error('[EMBRX] ✗ Failed to ensure external device record:', err.message);
+    console.error('[REF] ✗ Failed to ensure reference device record:', err.message);
   }
 };
 
-const normalizeEmbrxStation = (stationArray) => {
+/**
+ * Normalise a BPIT station array (array of {key, value} pairs) into a plain object.
+ */
+const normaliseStation = (stationArray) => {
   if (!Array.isArray(stationArray)) return null;
   const result = {};
   for (const entry of stationArray) {
@@ -165,114 +195,254 @@ const normalizeEmbrxStation = (stationArray) => {
   return result;
 };
 
-const extractEmbrxReading = (payload) => {
+/**
+ * Extract the Iligan City reading from the EMBRX API payload.
+ *
+ * Priority for PM2.5 value (matching what the webpage displays):
+ *   1. pm25AQI24hr  — 24-hour rolling average AQI (shown as the main number on the page)
+ *   2. pm25AQI      — current hourly AQI (fallback)
+ *   3. pm25_aqi24h / pm25_aqi  — alternate key spellings
+ */
+const extractRefReading = (payload) => {
   if (!Array.isArray(payload) || payload.length === 0) return null;
 
-  const stationArray = payload.find((station) => {
-    if (!Array.isArray(station)) return false;
-    return station.some((entry) => entry.key === 'stationID' && entry.value === EMBR_X_STATION_ID);
-  }) || payload[0];
+  // Find the Iligan City station; fall back to first entry if not found
+  const stationArray =
+    payload.find((station) => {
+      if (!Array.isArray(station)) return false;
+      return station.some(
+        (entry) => entry.key === 'stationID' && entry.value === REF_STATION_ID
+      );
+    }) || payload[0];
 
-  const raw = normalizeEmbrxStation(stationArray);
+  const raw = normaliseStation(stationArray);
   if (!raw) return null;
 
-  const pm25_aqi = parseNumber(raw.pm25AQI ?? raw.pm25AQI24hr ?? raw.pm25_aqi ?? raw.pm25_aqi24h);
-  const pm2_5 = pm25_aqi; // Store PM2.5 as AQI rating for the reference node, not raw concentration.
-  const temperature = parseNumber(raw.ambientTemperature ?? raw.ambient_temperature ?? raw.temperature);
-  const humidity = parseNumber(raw.ambientHumidity ?? raw.ambient_humidity ?? raw.humidity);
+  // pm25AQI24hr is the value displayed on app.bpit-inc.com/iliganstation
+  const pm25_aqi =
+    parseNumber(raw.pm25AQI24hr) ??
+    parseNumber(raw.pm25AQI)     ??
+    parseNumber(raw.pm25_aqi24h) ??
+    parseNumber(raw.pm25_aqi);
 
-  if (pm2_5 === null || temperature === null || humidity === null) {
-    return null;
+  const temperature = parseNumber(
+    raw.ambientTemperature ?? raw.ambient_temperature ?? raw.temperature
+  );
+  const humidity = parseNumber(
+    raw.ambientHumidity ?? raw.ambient_humidity ?? raw.humidity
+  );
+
+  if (pm25_aqi === null) return null;
+
+  // Parse timestamp from the station payload
+  let time = new Date();
+  if (raw.date && typeof raw.date === 'string') {
+    const parsed = new Date(raw.date.trim().replace(' ', 'T'));
+    if (!Number.isNaN(parsed.getTime())) time = parsed;
   }
 
-  return {
-    time: parseEmbrxTimestamp(raw),
-    pm2_5,
-    pm25_aqi,
-    temperature,
-    humidity,
-  };
+  return { time, pm25_aqi, temperature, humidity };
 };
 
-const processEmbrxPoll = async () => {
+/**
+ * Extract PM2.5 and AQI values from HTML using cheerio.
+ * Look for elements matching class names containing "_aqidata_".
+ * Handles multiple candidates by scoring context text (looking for keywords like pm2.5, aqi, reference, iligan).
+ */
+const extractFromHtml = (htmlText) => {
+  const $ = cheerio.load(htmlText);
+  const candidates = [];
+
+  $('[class*="_aqidata_"]').each((i, el) => {
+    const text = $(el).text().trim();
+    const val = parseNumber(text);
+    if (val !== null && val >= 0 && val <= 1000) {
+      // Find surrounding text context
+      const containerText = $(el).closest('div, section, body').text().toLowerCase();
+      candidates.push({ val, context: containerText });
+    }
+  });
+
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0].val;
+
+  let bestVal = null;
+  let bestScore = -1;
+  for (const c of candidates) {
+    let score = 0;
+    if (c.context.includes('pm2.5') || c.context.includes('pm2_5')) score += 10;
+    if (c.context.includes('aqi')) score += 5;
+    if (c.context.includes('reference') || c.context.includes('ref')) score += 3;
+    if (c.context.includes('iligan')) score += 2;
+    if (score > bestScore) {
+      bestScore = score;
+      bestVal = c.val;
+    }
+  }
+
+  return bestVal ?? candidates[0].val;
+};
+
+/**
+ * Main poll cycle.
+ * Dynamically handles both HTML webpages (via cheerio scraping) and JSON APIs (via JSON parsing).
+ * If the configured URL is the BPIT React SPA, it automatically queries the underlying JSON API.
+ */
+const processReferenceScraperPoll = async () => {
+  let apiUrl      = process.env.REFERENCE_URL || REF_DEFAULT_API_URL;
+  const timestamp = new Date();
+  let isBpitWeb   = false;
+
+  // Detect if target is the BPIT React SPA webpage, which requires routing to the underlying API
+  if (apiUrl.includes('app.bpit-inc.com') || apiUrl.includes('iliganstation')) {
+    isBpitWeb = true;
+    apiUrl = 'https://api.bpit-inc.com/embrx/l';
+  }
+
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000);
+  const timeout    = setTimeout(() => controller.abort(), REF_SCRAPE_TIMEOUT);
 
   try {
-    const response = await fetch(EMBR_X_API_URL, {
-      method: 'GET',
-      signal: controller.signal,
-      headers: { Accept: 'application/json' },
-    });
+    // ── 1. Fetch resource ─────────────────────────────────────────────────
+    let response;
+    const headers = {};
+    if (isBpitWeb || apiUrl === REF_DEFAULT_API_URL) {
+      headers.Accept = 'application/json';
+    } else {
+      headers.Accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8';
+    }
+
+    try {
+      response = await fetch(apiUrl, {
+        method:  'GET',
+        signal:  controller.signal,
+        headers: headers,
+      });
+    } catch (fetchErr) {
+      console.error('[REF] ✗ API/Webpage fetch failed:', fetchErr.message);
+      console.log(JSON.stringify({ reference_node_pm25: null, timestamp: timestamp.toISOString(), status: 'fetch_error', error: fetchErr.message }));
+      return;
+    }
 
     if (!response.ok) {
-      console.warn(`[EMBRX] ⚠ External API returned ${response.status} ${response.statusText}`);
+      console.warn(`[REF] ⚠ HTTP ${response.status} ${response.statusText} from ${apiUrl}`);
+      console.log(JSON.stringify({ reference_node_pm25: null, timestamp: timestamp.toISOString(), status: `http_${response.status}` }));
       return;
     }
 
-    const data = await response.json();
-    const reading = extractEmbrxReading(data);
+    // ── 2. Determine parsing strategy and extract reading ─────────────────
+    const contentType = response.headers.get('content-type') || '';
+    let reading = null;
 
-    if (!reading || reading.pm2_5 === null || reading.temperature === null || reading.humidity === null) {
-      console.warn('[EMBRX] ⚠ External API payload missing required fields', data);
+    if (contentType.includes('application/json') || isBpitWeb) {
+      let data;
+      try {
+        data = await response.json();
+      } catch (parseErr) {
+        console.error('[REF] ✗ JSON parse error:', parseErr.message);
+        console.log(JSON.stringify({ reference_node_pm25: null, timestamp: timestamp.toISOString(), status: 'parse_error', error: parseErr.message }));
+        return;
+      }
+      reading = extractRefReading(data);
+    } else {
+      const htmlText = await response.text();
+      const pm25Value = extractFromHtml(htmlText);
+      if (pm25Value !== null) {
+        reading = {
+          time: new Date(),
+          pm25_aqi: pm25Value,
+          temperature: null,
+          humidity: null
+        };
+      }
+    }
+
+    if (!reading || reading.pm25_aqi === null) {
+      console.warn('[REF] ⚠ Failed to extract reference PM2.5 reading (missing element or target field)');
+      console.log(JSON.stringify({ reference_node_pm25: null, timestamp: timestamp.toISOString(), status: 'missing_field' }));
       return;
     }
 
-    const pm25Value = reading.pm25_aqi ?? reading.pm2_5;
-    const query = `
-      INSERT INTO readings (
-        time, device_id, pm2_5, pm2_5_cal, temperature, humidity
-      ) VALUES ($1, $2, $3, $4, $5, $6)
-    `;
-    const values = [
-      reading.time,
-      EMBR_X_DEVICE_ID,
-      pm25Value,
-      pm25Value,
-      reading.temperature,
-      reading.humidity,
-    ];
+    // ── 3. Validate range [0, 1000] ─────────────────────────────────────────
+    if (reading.pm25_aqi < 0 || reading.pm25_aqi > 1000) {
+      console.warn(`[REF] ⚠ PM2.5 AQI value out of range: ${reading.pm25_aqi}`);
+      console.log(JSON.stringify({ reference_node_pm25: reading.pm25_aqi, timestamp: timestamp.toISOString(), status: 'out_of_range' }));
+      return;
+    }
 
-    await pool.query(query, values);
-    console.log('[EMBRX] ✓ External reading saved for', EMBR_X_DEVICE_ID);
+    const pm25Value = reading.pm25_aqi;
+    // Use poll receipt time so timeline/chart timestamps match when data was captured
+    // (BPIT API "date" can lag or repeat across 5-minute polls).
+    const recordedAt = timestamp;
 
+    // ── 4. Persist to database ─────────────────────────────────────────────
+    await pool.query(
+      `INSERT INTO readings (time, device_id, pm2_5, pm2_5_cal, temperature, humidity)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        recordedAt,
+        REF_DEVICE_ID,
+        pm25Value,
+        pm25Value,
+        reading.temperature ?? null,
+        reading.humidity    ?? null,
+      ]
+    );
+
+    // ── 5. Build cached reading ─────────────────────────────────────────────
     const cachedReading = {
-      time: reading.time,
-      device_id: EMBR_X_DEVICE_ID,
-      pm2_5: pm25Value,
-      pm25_aqi: reading.pm25_aqi,
-      pm2_5_cal: pm25Value,
-      temperature: reading.temperature,
-      humidity: reading.humidity,
+      time:        recordedAt,
+      device_id:   REF_DEVICE_ID,
+      pm2_5:       pm25Value,
+      pm25_aqi:    pm25Value,
+      pm2_5_cal:   pm25Value,
+      temperature: reading.temperature ?? null,
+      humidity:    reading.humidity    ?? null,
+      source_time: reading.time,
     };
 
+    // ── 6. Broadcast via Socket.IO ─────────────────────────────────────────
     if (io.engine.clientsCount > 0) {
       io.emit('new_reading', cachedReading);
     }
 
+    // ── 7. Update Redis cache ───────────────────────────────────────────────
     await Promise.all([
-      redisClient.set(`device:latest:${EMBR_X_DEVICE_ID}`, JSON.stringify(cachedReading), { EX: 3600 }),
+      redisClient.set(`device:latest:${REF_DEVICE_ID}`, JSON.stringify(cachedReading), { EX: 3600 }),
       redisClient.del('latest_readings:all'),
     ]).catch((err) => {
-      console.error('[EMBRX] ✗ Redis cache update failed:', err.message);
+      console.error('[REF] ✗ Redis cache update failed:', err.message);
     });
+
+    // ── 8. Structured retrieval log ──────────────────────────────────────────
+    const retrievalLog = {
+      reference_node_pm25: pm25Value,
+      timestamp:           timestamp.toISOString(),
+      status:              'success',
+    };
+    console.log(`[REF] ✓ Reference PM2.5 (dynamic retrieval) = ${pm25Value} | Temp = ${reading.temperature ?? 'N/A'}°C | Hum = ${reading.humidity ?? 'N/A'}%`);
+    console.log(JSON.stringify(retrievalLog));
+
   } catch (err) {
-    console.error('[EMBRX] ✗ Polling error:', err.message);
+    console.error('[REF] ✗ Unexpected polling error:', err.message);
+    console.log(JSON.stringify({ reference_node_pm25: null, timestamp: timestamp.toISOString(), status: 'error', error: err.message }));
   } finally {
     clearTimeout(timeout);
   }
 };
 
-const startEmbrxPoller = () => {
-  processEmbrxPoll();
-  embrxPollTimer = setInterval(processEmbrxPoll, EMBR_X_POLL_INTERVAL_MS);
-  console.log('[EMBRX] ✓ External EMBR API poller started (5m interval)');
+/** Start the reference node poller on a recurring interval. */
+const startReferenceScraperPoller = () => {
+  processReferenceScraperPoll(); // immediate first poll
+  refPollTimer = setInterval(processReferenceScraperPoll, REF_POLL_INTERVAL_MS);
+  console.log(`[REF] ✓ Reference node poller started (${REF_POLL_INTERVAL_MS / 1000}s interval) — source: ${process.env.REFERENCE_URL || REF_DEFAULT_API_URL}`);
 };
 
-const stopEmbrxPoller = () => {
-  if (embrxPollTimer) {
-    clearInterval(embrxPollTimer);
-    console.log('[EMBRX] ✓ External EMBR API poller stopped');
+/** Stop the reference node poller (called on graceful shutdown). */
+const stopReferenceScraperPoller = () => {
+  if (refPollTimer) {
+    clearInterval(refPollTimer);
+    console.log('[REF] ✓ Reference node poller stopped');
   }
 };
 
@@ -482,6 +652,13 @@ function authenticateToken(req, res, next) {
   });
 }
 
+function requireAdmin(req, res, next) {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
+}
+
 // --- MQTT logic ---
 mqttClient.on('connect', () => {
   console.log('[MQTT] ✓ Connected to broker');
@@ -689,7 +866,7 @@ app.get('/api/external/embrx/latest', async (req, res) => {
     try {
       const cached = await Promise.race([redisPromise, timeoutPromise]);
       if (cached) {
-        return res.json(JSON.parse(cached));
+        return res.json(normalizeReferenceRow(JSON.parse(cached)));
       }
     } catch (rediErr) {
       console.warn('[EMBR-X] ⚠ Redis get timed out or failed:', rediErr.message);
@@ -704,7 +881,7 @@ app.get('/api/external/embrx/latest', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'No EMBR-X readings found' });
     }
-    res.json(result.rows[0]);
+    res.json(normalizeReferenceRow(result.rows[0]));
   } catch (err) {
     console.error('[EMBR-X] ✗ Error in /api/external/embrx/latest:', err.message);
     res.status(500).json({ error: err.message });
@@ -716,7 +893,7 @@ app.get('/api/readings/latest', async (req, res) => {
     // Check cache first
     const cached = await redisClient.get('latest_readings:all');
     if (cached) {
-      return res.json(JSON.parse(cached));
+      return res.json(normalizeReferenceRows(JSON.parse(cached)));
     }
     
     // If not cached, query database directly
@@ -725,10 +902,11 @@ app.get('/api/readings/latest', async (req, res) => {
       FROM readings 
       ORDER BY device_id, time DESC
     `);
+    const rows = normalizeReferenceRows(result.rows);
     
     // Cache for 5 minutes
-    await redisClient.set('latest_readings:all', JSON.stringify(result.rows), { EX: 300 });
-    res.json(result.rows);
+    await redisClient.set('latest_readings:all', JSON.stringify(rows), { EX: 300 });
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -749,7 +927,7 @@ app.get('/api/readings', async (req, res) => {
     values.push(limit ? parseInt(limit) : 1000);
 
     const result = await pool.query(query, values);
-    res.json(result.rows);
+    res.json(normalizeReferenceRows(result.rows));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -869,7 +1047,7 @@ app.get('/api/stats/device/:id', async (req, res) => {
 });
 
 
-app.get('/api/export', async (req, res) => {
+app.get('/api/export', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { device_id, start, end } = req.query;
     let query = 'SELECT time, device_id, pm1_0, pm2_5, pm10, pm2_5_cal, temperature, humidity, rssi_dbm, battery_mv FROM readings WHERE 1=1';
@@ -991,16 +1169,16 @@ const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, async () => {
   console.log(`Backend server listening on port ${PORT}`);
   initServer(server);
-  startPredictionBatchProcessor();  // Start batch prediction processor
-  await ensureEmbrxDeviceRecord();
-  startEmbrxPoller();
+  startPredictionBatchProcessor();   // Start batch prediction processor
+  await ensureRefDeviceRecord();     // Ensure reference device row exists
+  startReferenceScraperPoller();     // Start HTML scraper for reference PM2.5
 });
 
 // --- Graceful Shutdown ---
 const shutdown = async () => {
   console.log('SIGTERM signal received: closing HTTP server');
-  stopPredictionBatchProcessor();  // Stop batch prediction processor
-  stopEmbrxPoller();
+  stopPredictionBatchProcessor();      // Stop batch prediction processor
+  stopReferenceScraperPoller();        // Stop reference node HTML scraper
   server.close(async () => {
     console.log('HTTP server closed');
     try {

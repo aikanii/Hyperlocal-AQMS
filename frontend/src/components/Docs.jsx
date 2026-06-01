@@ -1,8 +1,9 @@
+import Pm25EnvironmentalAssessment from './docs/Pm25EnvironmentalAssessment';
+
 const Docs = () => {
   return (
     <div style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '2rem', maxWidth: '1400px', margin: '0 auto' }}>
-      
-      {/* Upper Row: Health & Context */}
+
       <div className="grid-2-col">
         <div className="health-panel glass-panel" style={{ padding: '2.5rem' }}>
           <h2 style={{ marginTop: 0, fontSize: '1.5rem' }}>🌍 WHO Air Quality Guidelines</h2>
@@ -70,66 +71,7 @@ const Docs = () => {
         </div>
       </div>
 
-      {/* Lower Row: Technical Docs */}
-      <div className="grid-2-col">
-        <div className="firmware-panel glass-panel" style={{ padding: '2.5rem' }}>
-          <h2 style={{ marginTop: 0, fontSize: '1.5rem' }}>Firmware Architecture</h2>
-          <p style={{ color: 'var(--text-dim)', marginBottom: '2rem' }}>Hardware specifications and data communication protocol.</p>
-          
-          <div style={{ background: 'var(--panel)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', border: '1px solid var(--border)' }}>
-            <h4>Sensor Payload (JSON-over-MQTT)</h4>
-            <pre style={{ margin: 0, padding: '1rem', background: '#2c3e50', color: 'var(--text)', borderRadius: '4px', fontSize: '0.8rem' }}>
-{`{
-  "pm1_0": float,       // PM1.0 concentration
-  "pm2_5": float,       // PM2.5 concentration
-  "pm10": float,        // PM10 concentration
-  "temperature": float,  // Celsius
-  "humidity": float,     // Relative %
-  "rssi_dbm": int,      // WiFi Strength
-  "battery_mv": int     // Battery Voltage
-}`}
-            </pre>
-          </div>
-
-          <div style={{ borderTop: '1px solid var(--border)', marginTop: '2rem', paddingTop: '2rem' }}>
-            <h4>System Components</h4>
-            <ul style={{ paddingLeft: '1.5rem', lineHeight: '1.8', color: 'var(--text-dim)' }}>
-              <li><strong style={{color: 'var(--text)'}}>MCU:</strong> ESP32-WROOM-32E</li>
-              <li><strong style={{color: 'var(--text)'}}>PM Sensor:</strong> Plantower PMS7003</li>
-              <li><strong style={{color: 'var(--text)'}}>Temp/Hum:</strong> Sensirion SHT40</li>
-              <li><strong style={{color: 'var(--text)'}}>Protocol:</strong> MQTT (TCP/1883 or TLS/8883)</li>
-            </ul>
-          </div>
-        </div>
-
-        <div className="api-panel glass-panel" style={{ padding: '2.5rem' }}>
-          <h2 style={{ marginTop: 0, fontSize: '1.5rem' }}>REST API Documentation</h2>
-          <p style={{ color: 'var(--text-dim)', marginBottom: '2rem' }}>Available endpoints for 3rd party integrations.</p>
-
-          <div style={{ marginBottom: '2rem' }}>
-            <div style={{ padding: '0.85rem', background: 'rgba(33,150,243,0.1)', borderLeft: '4px solid #2196f3', marginBottom: '1rem' }}>
-              <strong>GET</strong> <code>/api/devices</code> <span style={{color: 'var(--text-dim)', marginLeft: '0.5rem'}}>- List all registered sensors.</span>
-            </div>
-            <div style={{ padding: '0.85rem', background: 'rgba(33,150,243,0.1)', borderLeft: '4px solid #2196f3', marginBottom: '1rem' }}>
-              <strong>GET</strong> <code>/api/readings/latest</code> <span style={{color: 'var(--text-dim)', marginLeft: '0.5rem'}}>- Current values for all devices.</span>
-            </div>
-            <div style={{ padding: '0.85rem', background: 'rgba(33,150,243,0.1)', borderLeft: '4px solid #2196f3', marginBottom: '1rem' }}>
-              <strong>GET</strong> <code>/api/stats/city</code> <span style={{color: 'var(--text-dim)', marginLeft: '0.5rem'}}>- 24h city-wide trends.</span>
-            </div>
-            <div style={{ padding: '0.85rem', background: 'rgba(251,192,45,0.1)', borderLeft: '4px solid #fbc02d', marginBottom: '1rem' }}>
-              <strong>POST</strong> <code>/api/auth/login</code> <span style={{color: 'var(--text-dim)', marginLeft: '0.5rem'}}>- Issue JWT access token.</span>
-            </div>
-            <div style={{ padding: '0.85rem', background: 'rgba(233,30,99,0.1)', borderLeft: '4px solid #e91e63', marginBottom: '1rem' }}>
-              <strong>POST</strong> <code>/api/simulate</code> <span style={{color: 'var(--text-dim)', marginLeft: '0.5rem'}}>- Push test data.</span>
-            </div>
-          </div>
-
-          <div style={{ borderTop: '1px solid var(--border)', paddingTop: '2rem' }}>
-            <h4 style={{ marginBottom: '0.5rem' }}>Real-time Data (WebSocket)</h4>
-            <p style={{ color: 'var(--text-dim)', margin: 0 }}>Subscribe to <code>new_reading</code> event on Socket.IO for live telemetry.</p>
-          </div>
-        </div>
-      </div>
+      <Pm25EnvironmentalAssessment />
     </div>
   );
 };

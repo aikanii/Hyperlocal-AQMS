@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import io from 'socket.io-client'
 import axios from 'axios'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { ReadingsProvider, useReadings } from './contexts/ReadingsContext'
 
 const VALID_REGION_IDS = ['all', 'Poblacion', 'Tibanga', 'Pala-o', 'Tambacan', 'Suarez'];
 
@@ -20,7 +20,7 @@ const getApiBaseUrlClient = () => {
 import Dashboard from './components/Dashboard'
 import MapView from './components/MapView'
 import Devices from './components/Devices'
-import Simulation from './components/Simulation'
+import Calibration from './components/Calibration'
 import Docs from './components/Docs'
 import Analytics from './components/Analytics'
 import LoadingScreen from './components/LoadingScreen'
@@ -164,19 +164,15 @@ const AppInner = () => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [showLoginPanel, setShowLoginPanel] = useState(false);  // Hidden by default, toggle with logo click
 
-  const [readings, setReadings] = useState([]);
-  const [devices, setDevices] = useState([]);
+  const { readings, devices, socketStatus, socketError, referenceReading } = useReadings();
+  const apiBaseUrl = useMemo(() => getApiBaseUrlClient(), []);
   const [showSplash, setShowSplash] = useState(true);
   const [showRegionSelect, setShowRegionSelect] = useState(false);
-  const apiBaseUrl = useMemo(() => getApiBaseUrlClient(), []);
-  const API_URL = apiBaseUrl.replace(/\/$/, '');
 
   const [selectedRegion, setSelectedRegion] = useState(() => {
     const stored = localStorage.getItem('aqms_region');
     return VALID_REGION_IDS.includes(stored) ? stored : 'all';
   });
-  const [socketStatus, setSocketStatus] = useState('connecting');
-  const [socketError, setSocketError] = useState(null);
   const [notify, setNotify] = useState(null);
   const [showConnectionModal, setShowConnectionModal] = useState(false);
 
@@ -212,171 +208,6 @@ const AppInner = () => {
 
   const safeActiveTab = NAV_TABS.some(t => t.id === activeTab) ? activeTab : 'map';
 
-  const EMBR_X_DEVICE_ID = 'denr_emb_x_reference_001';
-
-  useEffect(() => {
-    axios.defaults.baseURL = API_URL;
-
-    const fetchInitial = async () => {
-      try {
-        const [readingsRes, devicesRes] = await Promise.all([
-          axios.get('/api/readings/latest'),
-          axios.get('/api/devices')
-        ]);
-        let initialReadings = Array.isArray(readingsRes.data) ? readingsRes.data : [];
-        // Try to fetch external EMBR-X latest reading and merge it
-        try {
-          const ext = await axios.get('/api/external/embrx/latest');
-          if (ext?.data && ext.data.device_id === EMBR_X_DEVICE_ID) {
-            const idx = initialReadings.findIndex(r => r.device_id === EMBR_X_DEVICE_ID);
-            if (idx > -1) initialReadings[idx] = ext.data; else initialReadings.push(ext.data);
-          }
-        } catch (e) {
-          // ignore external read error — backend poller may not have run yet
-        }
-
-        setReadings(initialReadings);
-        setDevices(Array.isArray(devicesRes.data) ? devicesRes.data : []);
-      } catch (err) {
-        console.error('Error fetching initial data:', err);
-      }
-    };
-
-    const refreshExternalReference = async () => {
-      try {
-        const ext = await axios.get('/api/external/embrx/latest');
-        if (ext?.data && ext.data.device_id === EMBR_X_DEVICE_ID) {
-          setReadings(prev => {
-            const idx = prev.findIndex(r => r.device_id === EMBR_X_DEVICE_ID);
-            if (idx > -1) {
-              const updated = [...prev];
-              updated[idx] = ext.data;
-              return updated;
-            }
-            return [...prev, ext.data];
-          });
-        }
-      } catch (err) {
-        console.debug('[HY-AQMS] External EMBR-X refresh failed:', err.message);
-      }
-    };
-
-    fetchInitial();
-    const externalRefreshInterval = setInterval(refreshExternalReference, 300000); // refresh every 5 minutes
-    refreshExternalReference();
-    fetchInitial();
-
-    const socket = io(API_URL, {
-      path: '/socket.io',
-      timeout: 30000, // connection attempt timeout
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 20000,
-      // Prefer websocket and fallback to polling if needed
-      transports: ['websocket', 'polling'],
-      autoConnect: true,
-    });
-
-    socket.on('connect', () => {
-      setSocketStatus('connected');
-      setSocketError(null);
-      console.info('[HY-AQMS] Socket connected:', socket.id);
-    });
-
-    socket.on('disconnect', (reason) => {
-      setSocketStatus('disconnected');
-      setSocketError(reason);
-      console.warn('[HY-AQMS] Socket disconnected - Reason:', reason);
-      
-      // Distinguish between intentional and unintentional disconnects
-      if (reason === 'client namespace disconnect') {
-        console.debug('[HY-AQMS] Client-initiated disconnect (normal)');
-      } else if (reason.includes('transport')) {
-        console.warn('[HY-AQMS] Network transport error - will auto-reconnect');
-      } else if (reason.includes('timeout')) {
-        console.warn('[HY-AQMS] Connection timeout - will auto-reconnect');
-      }
-    });
-
-    socket.on('connect_error', (error) => {
-      setSocketStatus('disconnected');
-      setSocketError(error?.message || 'Connection error');
-      console.error('[HY-AQMS] Socket connection error:', error);
-    });
-
-    socket.on('reconnect_attempt', (attempt) => {
-      setSocketStatus('reconnecting');
-      setSocketError(null);
-      console.info('[HY-AQMS] Socket reconnect attempt', attempt);
-    });
-
-    socket.on('reconnect', (attempt) => {
-      setSocketStatus('connected');
-      setSocketError(null);
-      console.info('[HY-AQMS] Socket reconnected after', attempt, 'attempt(s)');
-      
-      // Fetch fresh data after reconnection to catch any missed updates
-      (async () => {
-        try {
-          console.debug('[HY-AQMS] Refreshing data after reconnect...');
-          const readingsRes = await axios.get('/api/readings/latest');
-          if (Array.isArray(readingsRes.data)) {
-            setReadings(readingsRes.data);
-            console.debug('[HY-AQMS] Data refreshed after reconnect', readingsRes.data.length, 'readings');
-          }
-        } catch (err) {
-          console.error('[HY-AQMS] Failed to refresh data after reconnect:', err.message);
-        }
-      })();
-    });
-
-    socket.on('new_reading', (payload) => {
-      setReadings(prev => {
-        const index = prev.findIndex(r => r.device_id === payload.device_id);
-        if (index > -1) {
-          const updated = [...prev];
-          updated[index] = payload;
-          return updated;
-        }
-        return [...prev, payload];
-      });
-    });
-
-    // Store socket in ref to prevent stale closures
-    const socketRef = { current: socket };
-
-    // Fallback polling - fetch latest data every 15 seconds if socket is not connected
-    const pollInterval = setInterval(async () => {
-      if (socket.connected) {
-        // Socket is connected, no need to poll
-        return;
-      }
-      
-      try {
-        console.debug('[HY-AQMS] Polling for latest data (socket disconnected)');
-        const readingsRes = await axios.get('/api/readings/latest');
-        if (Array.isArray(readingsRes.data) && readingsRes.data.length > 0) {
-          setReadings(readingsRes.data);
-          console.debug('[HY-AQMS] Polling refreshed', readingsRes.data.length, 'readings');
-        }
-      } catch (err) {
-        console.debug('[HY-AQMS] Polling failed:', err.message);
-      }
-    }, 15000);
-
-    // Only disconnect on actual unmount or when switching API URLs
-    return () => {
-      console.debug('[HY-AQMS] Cleaning up socket connection');
-      clearInterval(pollInterval);
-      clearInterval(externalRefreshInterval);
-      // Properly close the socket
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-      }
-    };
-  }, []);
-
   const handleRegionSelect = (region) => {
     setSelectedRegion(region);
     localStorage.setItem('aqms_region', region);
@@ -391,12 +222,12 @@ const AppInner = () => {
     return region === selectedRegion || String(region).toLowerCase() === 'all';
   });
 
-  // Note: We render Simulation unconditionally (if admin) but hide it when inactive,
+  // Note: We render Calibration unconditionally (if admin) but hide it when inactive,
   // so the auto-pilot interval and log state persist in the background.
   const renderContent = () => {
     switch (safeActiveTab) {
       case 'dashboard':  return <Dashboard readings={filteredReadings} />;
-      case 'analytics':  return <Analytics />;
+      case 'analytics':  return <Analytics devices={devices} />;
       case 'map':        return <MapView readings={filteredReadings} />;
       case 'devices':    return <Devices isAdmin={isAdmin} readings={readings} />;
       case 'dataflow':   return <DataFlow readings={readings} />;
@@ -523,7 +354,7 @@ const AppInner = () => {
           {renderContent()}
           {isAdmin && (
             <div style={{ display: activeTab === 'simulation' ? 'block' : 'none', height: '100%' }}>
-              <Simulation referenceReading={readings.find(r => r.device_id === EMBR_X_DEVICE_ID)} />
+              <Calibration />
             </div>
           )}
         </div>
@@ -709,12 +540,19 @@ class ErrorBoundary extends React.Component {
 }
 
 // Wrap AppInner in the provider and error boundary so every child can call useAuth()
-const App = () => (
-  <ErrorBoundary>
-    <AuthProvider>
-      <AppInner />
-    </AuthProvider>
-  </ErrorBoundary>
-);
+const App = () => {
+  const apiBaseUrl = useMemo(() => getApiBaseUrlClient(), []);
+  const API_URL = apiBaseUrl.replace(/\/$/, '');
+
+  return (
+    <ErrorBoundary>
+      <AuthProvider>
+        <ReadingsProvider apiUrl={API_URL}>
+          <AppInner />
+        </ReadingsProvider>
+      </AuthProvider>
+    </ErrorBoundary>
+  );
+};
 
 export default App;

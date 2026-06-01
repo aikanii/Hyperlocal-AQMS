@@ -3,6 +3,8 @@ import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import axios from 'axios';
+import { REFERENCE_DEVICE_ID } from '../constants/referenceNode';
+import { getDisplayPm25, isReferenceDevice } from '../utils/referenceNode';
 
 // WHO/US-EPA Air Quality Index (PM2.5-based)
 const PAQI = [
@@ -49,7 +51,6 @@ const createReferenceIcon = () => {
 };
 
 const MapView = ({ readings }) => {
-  const EMBR_X_DEVICE_ID = 'denr_emb_x_reference_001';
   const [devices, setDevices] = useState([]);
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [showSensors, setShowSensors] = useState(true);
@@ -71,7 +72,7 @@ const MapView = ({ readings }) => {
 
   // Compute live analytics
   const analytics = useMemo(() => {
-    const validReadings = readings.filter(r => r && r.device_id !== EMBR_X_DEVICE_ID && (now - new Date(r.time).getTime() < 300000));
+    const validReadings = readings.filter(r => r && r.device_id !== REFERENCE_DEVICE_ID && (now - new Date(r.time).getTime() < 300000));
     const count = validReadings.length;
     const pm25Avg = count > 0 ? (validReadings.reduce((sum, r) => sum + (r.pm2_5_cal || 0), 0) / count).toFixed(1) : '--';
     const status = getAQIInfo(pm25Avg === '--' ? null : Number(pm25Avg));
@@ -157,7 +158,7 @@ const MapView = ({ readings }) => {
         {/* Heatmap Overlay Layer via Concentric Gradients */}
         {showHeatmap && devices.map(device => {
           const reading = readings.find(r => r.device_id === device.device_id);
-          const pm25 = reading ? (device.device_id === EMBR_X_DEVICE_ID ? reading.pm25_aqi : reading.pm2_5_cal) : null;
+          const pm25 = reading ? getDisplayPm25(reading, device.device_id) : null;
           if (pm25 === null) return null;
           
           const info = getAQIInfo(pm25);
@@ -176,7 +177,7 @@ const MapView = ({ readings }) => {
         {/* Physical Sensor Nodes */}
         {showSensors && devices.map(device => {
           const reading = readings.find(r => r.device_id === device.device_id);
-          const pm25 = reading ? (device.device_id === EMBR_X_DEVICE_ID ? reading.pm25_aqi : reading.pm2_5_cal) : null;
+          const pm25 = reading ? getDisplayPm25(reading, device.device_id) : null;
           const info = getAQIInfo(pm25);
           const color = info.color;
           
@@ -184,7 +185,7 @@ const MapView = ({ readings }) => {
             <Marker 
               key={device.device_id}
               position={[device.lat, device.lng]}
-              icon={device.device_id === EMBR_X_DEVICE_ID ? createReferenceIcon() : createGlowingIcon(color)}
+              icon={isReferenceDevice(device.device_id) ? createReferenceIcon() : createGlowingIcon(color)}
             >
               <Popup className="glass-popup">
                 <div style={{ 
@@ -196,9 +197,9 @@ const MapView = ({ readings }) => {
                 }}>
                   <div style={{ display: 'flex', flexDirection: 'column', marginBottom: '1rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 'bold', color: device.device_id === EMBR_X_DEVICE_ID ? '#f59e0b' : 'inherit' }}>{device.name || device.device_id}</h4>
-                        <span style={{ fontSize: '0.6rem', color: device.device_id === EMBR_X_DEVICE_ID ? '#f59e0b' : 'var(--text-dim)', background: device.device_id === EMBR_X_DEVICE_ID ? 'rgba(245,158,11,0.15)' : 'var(--overlay-bg-hover)', border: device.device_id === EMBR_X_DEVICE_ID ? '1px solid rgba(245,158,11,0.3)' : 'none', padding: '0.2rem 0.4rem', borderRadius: '4px', fontWeight: device.device_id === EMBR_X_DEVICE_ID ? 'bold' : 'normal' }}>
-                          {device.device_id === EMBR_X_DEVICE_ID ? 'REFERENCE' : 'STATION'}
+                        <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 'bold', color: isReferenceDevice(device.device_id) ? '#f59e0b' : 'inherit' }}>{device.name || device.device_id}</h4>
+                        <span style={{ fontSize: '0.6rem', color: isReferenceDevice(device.device_id) ? '#f59e0b' : 'var(--text-dim)', background: isReferenceDevice(device.device_id) ? 'rgba(245,158,11,0.15)' : 'var(--overlay-bg-hover)', border: isReferenceDevice(device.device_id) ? '1px solid rgba(245,158,11,0.3)' : 'none', padding: '0.2rem 0.4rem', borderRadius: '4px', fontWeight: isReferenceDevice(device.device_id) ? 'bold' : 'normal' }}>
+                          {isReferenceDevice(device.device_id) ? 'REFERENCE' : 'STATION'}
                         </span>
                       </div>
                     <div style={{ fontSize: '0.7rem', color: info.color, fontWeight: 'bold', marginTop: '0.4rem', letterSpacing: '0.5px' }}>
@@ -210,9 +211,9 @@ const MapView = ({ readings }) => {
                     <div className="glass-panel" style={{ padding: '0.6rem', textAlign: 'center', background: 'var(--overlay-bg)' }}>
                       <div style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginBottom: '0.2rem' }}>PM2.5</div>
                       <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: color }}>
-                        {pm25 != null ? (device.device_id === EMBR_X_DEVICE_ID ? pm25.toFixed(0) : pm25.toFixed(1)) : '---'}
+                        {pm25 != null ? (isReferenceDevice(device.device_id) ? pm25.toFixed(0) : pm25.toFixed(1)) : '---'}
                         <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.25rem' }}>
-                          {device.device_id === EMBR_X_DEVICE_ID ? 'AQI' : 'µg/m³'}
+                          {isReferenceDevice(device.device_id) ? 'AQI' : 'µg/m³'}
                         </span>
                       </div>
                     </div>

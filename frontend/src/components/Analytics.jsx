@@ -1,5 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useReadings } from '../contexts/ReadingsContext';
+import { downloadDataset } from '../utils/exportDataset';
+import { REFERENCE_DEVICE_ID } from '../constants/referenceNode';
+import {
+  isReferenceDevice,
+  getDisplayPm25,
+  getPm25Unit,
+  normalizeReferenceReading,
+  normalizeReadingsList,
+} from '../utils/referenceNode';
+import ReferenceTimeline from './ReferenceTimeline';
 import axios from 'axios';
 import { Line } from 'react-chartjs-2';
 import {
@@ -23,13 +34,16 @@ const getAQIColor = (pm25) => {
   return (PAQI.find(t => pm25 <= t.max) || PAQI[PAQI.length - 1]).color;
 };
 
-const Analytics = () => {
+const Analytics = ({ devices: devicesProp = [] }) => {
   const { isAdmin } = useAuth();
-  const [devices, setDevices] = useState([]);
+  const { referenceReading, referenceTimeline, refreshReferenceTimeline } = useReadings();
   const [selectedDeviceId, setSelectedDeviceId] = useState(null);
   const [stats, setStats] = useState([]);
-  const [readings, setReadings] = useState([]);
+  const [historyReadings, setHistoryReadings] = useState([]);
   const [predictions, setPredictions] = useState([]);
+  const timelineEndRef = useRef(null);
+
+  const devices = devicesProp;
   // 'idle' | 'warming_up' | 'ready' | 'error'
   const [mlStatus, setMlStatus] = useState('idle');
   const [range, setRange] = useState('24h');
@@ -37,23 +51,12 @@ const Analytics = () => {
   const [detailsLoading, setDetailsLoading] = useState(false);
 
   useEffect(() => {
-    const fetchDevices = async () => {
-      try {
-        const res = await axios.get('/api/devices');
-        const devicesData = Array.isArray(res.data) ? res.data : [];
-        setDevices(devicesData);
-        if (devicesData.length > 0) {
-          setSelectedDeviceId(devicesData[0].device_id);
-        }
-      } catch (err) {
-        console.error('Error fetching devices:', err);
-        setDevices([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchDevices();
-  }, []);
+    if (devices.length > 0 && !selectedDeviceId) {
+      const ref = devices.find((d) => d.device_id === REFERENCE_DEVICE_ID);
+      setSelectedDeviceId(ref?.device_id ?? devices[0].device_id);
+    }
+    if (devices.length > 0) setLoading(false);
+  }, [devices, selectedDeviceId]);
 
   useEffect(() => {
     if (!selectedDeviceId) return;
@@ -66,7 +69,9 @@ const Analytics = () => {
           axios.get(`/api/readings?device_id=${selectedDeviceId}&limit=50`),
         ]);
         setStats(Array.isArray(statsRes.data) ? statsRes.data : []);
-        setReadings(Array.isArray(readingsRes.data) ? readingsRes.data : []);
+        setHistoryReadings(
+          normalizeReadingsList(Array.isArray(readingsRes.data) ? readingsRes.data : [])
+        );
 
         // Handle ML prediction separately so a 503 never blocks stats/readings
         try {
@@ -87,7 +92,7 @@ const Analytics = () => {
       } catch (err) {
         console.error('Error fetching device details:', err);
         setStats([]);
-        setReadings([]);
+        setHistoryReadings([]);
         setPredictions([]);
       } finally {
         setDetailsLoading(false);
@@ -97,11 +102,40 @@ const Analytics = () => {
     fetchDetails();
   }, [selectedDeviceId, range]);
 
-  const selectedDevice = devices.find(d => d.device_id === selectedDeviceId);
-  const isReferenceDevice = selectedDevice?.device_id === 'denr_emb_x_reference_001';
-  const latestReading = readings[0] || {};
-  const displayedPm25 = isReferenceDevice ? latestReading.pm25_aqi : latestReading.pm2_5_cal;
-  const pm25Unit = isReferenceDevice ? 'AQI' : 'µg/m³';
+  useEffect(() => {
+    if (!isReferenceDevice(selectedDeviceId)) return;
+    refreshReferenceTimeline();
+  }, [selectedDeviceId, refreshReferenceTimeline]);
+
+  const selectedDevice = devices.find((d) => d.device_id === selectedDeviceId);
+  const isRefSelected = isReferenceDevice(selectedDeviceId);
+  const liveReading = isRefSelected && referenceReading
+    ? referenceReading
+    : historyReadings[0] || {};
+  const displayedPm25 = getDisplayPm25(liveReading, selectedDeviceId);
+  const pm25Unit = getPm25Unit(selectedDeviceId);
+
+  const tableReadings = useMemo(() => {
+    if (!isRefSelected) return historyReadings;
+    return [...referenceTimeline]
+      .reverse()
+      .map((p) =>
+        normalizeReferenceReading({
+          time: p.time,
+          pm25_aqi: p.pm25_aqi,
+          pm2_5_cal: p.pm25_aqi,
+          device_id: REFERENCE_DEVICE_ID,
+          temperature: p.temperature ?? referenceReading?.temperature,
+          humidity: p.humidity ?? referenceReading?.humidity,
+        })
+      );
+  }, [isRefSelected, referenceTimeline, historyReadings, referenceReading]);
+
+  useEffect(() => {
+    if (isRefSelected && timelineEndRef.current) {
+      timelineEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [isRefSelected, referenceTimeline.length, referenceReading?.time]);
 
   const sortedStats = [...stats].sort((a, b) => new Date(a.bucket) - new Date(b.bucket));
 
@@ -134,7 +168,7 @@ const Analytics = () => {
     datasets: [
       {
         fill: true,
-        label: 'PM2.5 (Historical)',
+        label: isRefSelected ? 'AQI (Historical)' : 'PM2.5 (Historical)',
         data: pm25Data,
         borderColor: '#02EFF0',
         backgroundColor: 'rgba(2, 239, 240, 0.1)',
@@ -202,7 +236,7 @@ const Analytics = () => {
         </div>
         <div className="analytics-sidebar-list" style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
           {devices.map(device => {
-            const isRef = device.device_id === 'denr_emb_x_reference_001';
+            const isRef = isReferenceDevice(device.device_id);
             const isSelected = selectedDeviceId === device.device_id;
             return (
             <button
@@ -249,7 +283,7 @@ const Analytics = () => {
                 <div>
                   <h2 style={{ fontSize: '2.2rem', fontWeight: '800', margin: '0 0 0.5rem 0', display: 'flex', alignItems: 'center' }}>
                     {selectedDevice.name}
-                    {selectedDevice.device_id === 'denr_emb_x_reference_001' && (
+                    {isRefSelected && (
                       <span style={{ fontSize: '0.85rem', marginLeft: '0.8rem', color: '#f59e0b', background: 'rgba(245,158,11,0.1)', padding: '0.3rem 0.6rem', borderRadius: '6px', fontWeight: '700', border: '1px solid rgba(245,158,11,0.3)', verticalAlign: 'middle' }}>⭐ REFERENCE GRADE</span>
                     )}
                   </h2>
@@ -258,38 +292,42 @@ const Analytics = () => {
                     <span style={{ color: 'var(--accent)', marginLeft: '0.5rem', fontWeight: 'bold' }}>{selectedDevice.status.toUpperCase()}</span>
                   </p>
                 </div>
-                <a
-                  href={`/api/export?device_id=${selectedDeviceId}`}
-                  download={`${selectedDeviceId}-data.csv`}
-                  className="glass-panel hover-lift"
-                  style={{ padding: '0.75rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem', textDecoration: 'none', color: 'var(--accent)', fontSize: '0.85rem', fontWeight: 'bold', border: '1px solid var(--accent)' }}
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                  Export CSV
-                </a>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => downloadDataset(`?device_id=${selectedDeviceId}`, `${selectedDeviceId}-data.csv`)}
+                    className="glass-panel hover-lift"
+                    style={{ padding: '0.75rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent)', fontSize: '0.85rem', fontWeight: 'bold', border: '1px solid var(--accent)', background: 'transparent', cursor: 'pointer', font: 'inherit' }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    Export CSV
+                  </button>
+                )}
               </div>
             </header>
 
             {/* Recent Metrics */}
             <div className="analytics-metrics-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1.5rem', marginBottom: '2.5rem' }}>
               <div className="glass-panel" style={{ padding: '1.5rem' }}>
-                <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '0.8rem' }}>PM2.5</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '0.8rem' }}>
+                  {isRefSelected ? 'AQI (24h)' : 'PM2.5'}
+                </div>
                 <div style={{ fontSize: '2rem', fontWeight: '900', color: getAQIColor(displayedPm25) }}>
-                  {displayedPm25 != null ? (isReferenceDevice ? displayedPm25.toFixed(0) : displayedPm25.toFixed(1)) : '---'}
+                  {displayedPm25 != null ? (isRefSelected ? displayedPm25.toFixed(0) : displayedPm25.toFixed(1)) : '---'}
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.3rem' }}>{pm25Unit}</span>
                 </div>
               </div>
               <div className="glass-panel" style={{ padding: '1.5rem' }}>
                 <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '0.8rem' }}>Temperature</div>
                 <div style={{ fontSize: '2rem', fontWeight: '900', color: 'var(--text)' }}>
-                  {readings[0]?.temperature?.toFixed(1) || '---'}
+                  {liveReading?.temperature?.toFixed(1) || '---'}
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.3rem' }}>°C</span>
                 </div>
               </div>
               <div className="glass-panel" style={{ padding: '1.5rem' }}>
                 <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '0.8rem' }}>Humidity</div>
                 <div style={{ fontSize: '2rem', fontWeight: '900', color: 'var(--accent)' }}>
-                  {readings[0]?.humidity?.toFixed(1) || '---'}
+                  {liveReading?.humidity?.toFixed(1) || '---'}
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.3rem' }}>%</span>
                 </div>
               </div>
@@ -298,20 +336,30 @@ const Analytics = () => {
                   <div className="glass-panel" style={{ padding: '1.5rem' }}>
                     <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '0.8rem' }}>Signal (RSSI)</div>
                     <div style={{ fontSize: '1.5rem', fontWeight: '900', color: '#10b981' }}>
-                      {readings[0]?.rssi_dbm || '---'}
+                      {liveReading?.rssi_dbm || '---'}
                       <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.3rem' }}>dBm</span>
                     </div>
                   </div>
                   <div className="glass-panel" style={{ padding: '1.5rem' }}>
                     <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '0.8rem' }}>Battery</div>
                     <div style={{ fontSize: '1.5rem', fontWeight: '900', color: '#f59e0b' }}>
-                      {(readings[0]?.battery_mv / 1000)?.toFixed(2) || '---'}
+                      {(liveReading?.battery_mv / 1000)?.toFixed(2) || '---'}
                       <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.3rem' }}>V</span>
                     </div>
                   </div>
                 </>
               )}
             </div>
+
+            {isRefSelected && (
+              <div className="glass-panel" style={{ padding: '2rem', marginBottom: '2.5rem' }}>
+                <h3 style={{ margin: '0 0 1.5rem 0', fontSize: '1rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                  Real-Time AQI Timeline
+                </h3>
+                <ReferenceTimeline timeline={referenceTimeline} />
+                <div ref={timelineEndRef} />
+              </div>
+            )}
 
             {/* Trend Chart */}
             <div className="glass-panel" style={{ padding: '2rem', marginBottom: '2.5rem' }}>
@@ -389,7 +437,7 @@ const Analytics = () => {
                   <thead style={{ position: 'sticky', top: 0, background: 'var(--surface)', zIndex: 1 }}>
                     <tr style={{ fontSize: '0.75rem', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
                       <th style={{ padding: '1rem' }}>Timestamp</th>
-                      <th style={{ padding: '1rem' }}>PM2.5 ({isReferenceDevice ? 'AQI' : 'Calibrated'})</th>
+                      <th style={{ padding: '1rem' }}>PM2.5 ({isRefSelected ? 'AQI' : 'Calibrated'})</th>
                       <th style={{ padding: '1rem' }}>PM10</th>
                       <th style={{ padding: '1rem' }}>Temp</th>
                       <th style={{ padding: '1rem' }}>Hum</th>
@@ -397,13 +445,13 @@ const Analytics = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {readings.map((r, i) => {
-                      const rowPm25 = isReferenceDevice ? r.pm25_aqi : r.pm2_5_cal;
+                    {tableReadings.map((r, i) => {
+                      const rowPm25 = getDisplayPm25(r, selectedDeviceId);
                       return (
-                        <tr key={i} style={{ borderBottom: '1px solid var(--border)', fontSize: '0.85rem' }}>
+                        <tr key={`${r.time}-${i}`} style={{ borderBottom: '1px solid var(--border)', fontSize: '0.85rem' }}>
                           <td style={{ padding: '0.8rem 1rem' }}>{new Date(r.time).toLocaleString()}</td>
                           <td style={{ padding: '0.8rem 1rem', color: getAQIColor(rowPm25), fontWeight: 'bold' }}>
-                            {rowPm25 != null ? (isReferenceDevice ? rowPm25.toFixed(0) : rowPm25.toFixed(2)) : '---'}
+                            {rowPm25 != null ? (isRefSelected ? rowPm25.toFixed(0) : rowPm25.toFixed(2)) : '---'}
                           </td>
                           <td style={{ padding: '0.8rem 1rem' }}>{r.pm10?.toFixed(2)}</td>
                           <td style={{ padding: '0.8rem 1rem' }}>{r.temperature?.toFixed(1)}°C</td>

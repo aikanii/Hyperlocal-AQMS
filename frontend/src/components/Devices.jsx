@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { getDisplayPm25, getPm25Unit, isReferenceDevice, formatPm25 } from '../utils/referenceNode';
 
 // Decodes the JWT and checks if it is still valid (not expired).
 const getValidToken = () => {
@@ -184,11 +185,11 @@ const Devices = ({ isAdmin = false, readings = [] }) => {
         /* PUBLIC VIEW: Premium Station Gallery */
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '2rem' }}>
           {devices.map(device => {
-            const isReference = device.device_id === 'denr_emb_x_reference_001';
+            const isReference = isReferenceDevice(device.device_id);
             const latest = readings.find(r => r.device_id === device.device_id);
-            const pm25Value = isReference ? latest?.pm25_aqi : latest?.pm2_5_cal;
-            const pm25Unit = isReference ? 'AQI' : 'µg/m³';
-            const pm25Display = pm25Value != null ? (isReference ? pm25Value.toFixed(0) : pm25Value.toFixed(1)) : '---';
+            const pm25Value = getDisplayPm25(latest, device.device_id);
+            const pm25Unit = getPm25Unit(device.device_id);
+            const pm25Display = formatPm25(pm25Value, device.device_id);
             const isOffline = device.status !== 'active' || (latest && (new Date() - new Date(latest.time)) > 600000);
             
             return (
@@ -262,7 +263,7 @@ const Devices = ({ isAdmin = false, readings = [] }) => {
             </thead>
             <tbody>
               {devices.map(device => {
-                const isReference = device.device_id === 'denr_emb_x_reference_001';
+                const isReference = isReferenceDevice(device.device_id);
                 const latest = readings.find(r => r.device_id === device.device_id);
                 const now = new Date();
                 const lastSeen = latest ? new Date(latest.time) : null;

@@ -148,8 +148,8 @@ const SensorToggleCard = ({ device, enabled, stats, onToggle }) => {
   );
 };
 
-// ── Main Simulation Component ─────────────────────────────────────────────────
-const Simulation = ({ referenceReading }) => {
+// ── Main Calibration Component ─────────────────────────────────────────────────
+const Calibration = ({ referenceReading }) => {
   const { isAdmin } = useAuth();
   const REF_DEVICE_ID = 'denr_emb_x_reference_001';
 
@@ -258,10 +258,25 @@ const Simulation = ({ referenceReading }) => {
   const buildData = (device_id) => {
     const p = payloadRef.current;
     const vary = (base, d) => Number((base + (Math.random() * d * 2 - d)).toFixed(2));
+    const locationPm25Calibration = {
+      pilmico_corp_001:      { factor: 1.35, offset: 10 }, // Very High Risk
+      nsc_iligan_001:        { factor: 1.35, offset: 10 }, // Very High Risk
+      tambo_terminal_001:    { factor: 1.18, offset: 6 },  // High Risk
+      southbound_terminal_001: { factor: 1.18, offset: 6 }, // High Risk
+      tambacan_hall_001:     { factor: 1.18, offset: 6 },  // High Risk
+      poblacion_hall_010:    { factor: 1.0, offset: 0 },   // Moderate Risk
+      suarez_iligan_001:     { factor: 1.0, offset: 0 },   // Moderate Risk
+      iligan_city_hall_001:  { factor: 1.0, offset: 0 },   // Moderate Risk
+      iligan_highschool_001: { factor: 0.85, offset: -5 }, // Low Risk
+      msu_iit_campus_001:    { factor: 0.7, offset: -8 },  // Very Low Risk
+    };
+    const calibration = locationPm25Calibration[device_id] || { factor: 1.0, offset: 0 };
+    const calibratedPm25 = Math.max(0, p.pm2_5 * calibration.factor + calibration.offset);
+
     return {
       device_id,
       pm1_0:       Math.max(0, vary(p.pm1_0, 2)),
-      pm2_5:       Math.max(0, vary(p.pm2_5, 5)),
+      pm2_5:       Math.max(0, vary(calibratedPm25, 5)),
       pm10:        Math.max(0, vary(p.pm10, 8)),
       temperature: vary(p.temperature, 0.8),
       humidity:    Math.min(100, Math.max(0, vary(p.humidity, 3))),
@@ -623,4 +638,4 @@ const Simulation = ({ referenceReading }) => {
   );
 };
 
-export default Simulation;
+export default Calibration;
