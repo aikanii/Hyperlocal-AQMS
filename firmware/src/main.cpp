@@ -268,13 +268,14 @@ bool publishToMQTT(float temperature, float humidity, const PMS5003Data &pms,
 
   JsonDocument doc;
 
-  // PM data (atmospheric readings — what the dashboard expects)
+  // PM data
+  // IMPORTANT: Backend now treats `pm2_5` as AQI (not µg/m³).
+  // We compute AQI from the measured PM2.5 concentration and publish AQI in `pm2_5`.
   if (pmsStatus < 2) {
-    doc["pm1_0"] = (float)pms.pm1_0_atm;
-    doc["pm2_5"] = (float)pms.pm2_5_atm;
+    int aqi = calcAQI_PM25((float)pms.pm2_5_atm);
+    doc["pm2_5"] = (float)aqi; // AQI
     doc["pm10"] = (float)pms.pm10_atm;
   } else {
-    doc["pm1_0"] = (float)0;
     doc["pm2_5"] = (float)0;
     doc["pm10"] = (float)0;
   }
@@ -371,7 +372,7 @@ void loop() {
   float heatIndexF = dht.computeHeatIndex(tempF, humidity);
   bool dhtOk = !isnan(humidity) && !isnan(tempC);
 
-  // ── PMS5003 ────────────────────────────────────────────────
+  // ──  PMS5003  ────────────────────────────────────────────────
   PMS5003Data pms;
   int pmsStatus = readPMS5003(pms);
 
@@ -407,9 +408,7 @@ void loop() {
 
   if (pmsStatus < 2) {
     int aqi = calcAQI_PM25(pms.pm2_5_atm);
-    Serial.println("║  — Concentration (µg/m³) —              ║");
-    Serial.printf("║  PM1.0 : %4d std | %4d atm             ║\n", pms.pm1_0_std,
-                  pms.pm1_0_atm);
+    Serial.println("║  — AQI (EPA, PM2.5) —                   ║");
     Serial.printf("║  PM2.5 : %4d std | %4d atm             ║\n", pms.pm2_5_std,
                   pms.pm2_5_atm);
     Serial.printf("║  PM10  : %4d std | %4d atm             ║\n", pms.pm10_std,

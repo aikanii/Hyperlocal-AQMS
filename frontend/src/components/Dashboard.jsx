@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useReadings } from '../contexts/ReadingsContext';
 import { downloadDataset } from '../utils/exportDataset';
 import { REFERENCE_DEVICE_ID } from '../constants/referenceNode';
-import { getDisplayPm25, getPm25Unit } from '../utils/referenceNode';
+import { getDisplayAqi, getDisplayPm25Conc, getPm25Unit } from '../utils/referenceNode';
 import { Line } from 'react-chartjs-2';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler
@@ -34,7 +34,8 @@ const getAQIColor = (pm25) => getPAQI(pm25).color;
 const Dashboard = ({ readings }) => {
   const { isAdmin } = useAuth();
   const { referenceReading } = useReadings();
-  const refAqi = getDisplayPm25(referenceReading, REFERENCE_DEVICE_ID);
+  const refAqi = getDisplayAqi(referenceReading, REFERENCE_DEVICE_ID);
+  const refPm25Conc = getDisplayPm25Conc(referenceReading);
   const [stats, setStats] = useState([]);
   const [predictions, setPredictions] = useState([]);
   const [range, setRange] = useState('24h');
@@ -73,13 +74,20 @@ const Dashboard = ({ readings }) => {
 
   const sensorReadings = readings.filter(r => r.device_id !== REFERENCE_DEVICE_ID);
   const liveAvg = sensorReadings.length > 0 ? {
-    pm2_5: sensorReadings.reduce((sum, r) => sum + (r.pm2_5_cal || 0), 0) / sensorReadings.length,
+    aqi: sensorReadings.reduce(
+      (sum, r) => sum + (getDisplayAqi(r, r.device_id) ?? 0),
+      0
+    ) / sensorReadings.length,
+    pm25Conc: sensorReadings.reduce(
+      (sum, r) => sum + (getDisplayPm25Conc(r, r.device_id) ?? 0),
+      0
+    ) / sensorReadings.length,
     pm10: sensorReadings.reduce((sum, r) => sum + (r.pm10 || 0), 0) / sensorReadings.length,
     temp: sensorReadings.reduce((sum, r) => sum + (r.temperature || 0), 0) / sensorReadings.length,
     hum: sensorReadings.reduce((sum, r) => sum + (r.humidity || 0), 0) / sensorReadings.length
-  } : { pm2_5: null, pm10: null, temp: null, hum: null };
+  } : { aqi: null, pm25Conc: null, pm10: null, temp: null, hum: null };
 
-  const aqiColor = getAQIColor(liveAvg.pm2_5);
+  const aqiColor = getAQIColor(liveAvg.aqi);
   const sortedStats = [...stats].sort((a, b) => new Date(a.bucket) - new Date(b.bucket));
 
   const pastLabels = sortedStats.map(s => {
@@ -136,7 +144,7 @@ const Dashboard = ({ readings }) => {
       },
       {
         fill: true,
-        label: 'PM10 (Historical)',
+        label: 'PM10 (Historical) (μg/m³)',
         data: pm10Data,
         borderColor: 'rgba(148, 163, 184, 0.6)',
         backgroundColor: 'rgba(148, 163, 184, 0.05)',
@@ -211,25 +219,37 @@ const Dashboard = ({ readings }) => {
               DENR-EMB Reference Node
             </div>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-dim)' }}>
-              Live 24h AQI from BPIT EMBRX — synchronized across map, analytics, and devices
+              Live AQI (unitless) & PM2.5 concentration (μg/m³) from BPIT EMBRX — synchronized across map, analytics, and devices
             </div>
           </div>
-          <div style={{ fontSize: '2.5rem', fontWeight: '900', color: getAQIColor(refAqi) }}>
-            {refAqi.toFixed(0)}
-            <span style={{ fontSize: '0.9rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.35rem' }}>{getPm25Unit(REFERENCE_DEVICE_ID)}</span>
+
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
+            <div style={{ fontSize: '2.1rem', fontWeight: '900', color: getAQIColor(refAqi) }}>
+              {refAqi.toFixed(0)}
+              <span style={{ fontSize: '0.9rem', color: 'var(--text-dim)', fontWeight: 'normal', marginLeft: '0.35rem' }}>{getPm25Unit(REFERENCE_DEVICE_ID)}</span>
+            </div>
+            <div style={{ fontSize: '1.0rem', fontWeight: '800', color: 'var(--text-dim)' }}>
+              PM2.5: {refPm25Conc != null ? refPm25Conc.toFixed(1) : '---'} <span style={{ fontSize: '0.9rem', fontWeight: 'normal' }}>μg/m³</span>
+            </div>
           </div>
         </div>
       )}
       
-      <div className="stat-grid animate-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '2rem', animationDelay: '0.2s' }}>
+        <div className="stat-grid animate-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '2rem', animationDelay: '0.2s' }}>
         <div className="glass-panel hover-lift" style={{ padding: '1.5rem', boxShadow: `0 0 30px ${aqiColor}15`, borderTop: `4px solid ${aqiColor}` }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1rem' }}>Fine Particulate (PM2.5)</div>
-          <div style={{ fontSize: '2.8rem', fontWeight: '900', color: aqiColor, display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-            {liveAvg.pm2_5?.toFixed(1) || '---'}
-            <span style={{ fontSize: '1rem', color: 'var(--text-dim)', fontWeight: 'normal' }}>µg/m³</span>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1rem' }}>Fine (PM2.5)</div>
+
+          <div style={{ fontSize: '2.6rem', fontWeight: '900', color: aqiColor, display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+            {liveAvg.aqi != null ? liveAvg.aqi.toFixed(0) : '---'}
+            <span style={{ fontSize: '1rem', color: 'var(--text-dim)', fontWeight: 'normal' }}>AQI</span>
           </div>
+
+          <div style={{ marginTop: '0.35rem', fontSize: '1.0rem', fontWeight: '800', color: 'var(--text-dim)' }}>
+            PM2.5: {liveAvg.pm25Conc != null ? liveAvg.pm25Conc.toFixed(1) : '---'} <span style={{ fontSize: '0.9rem', fontWeight: 'normal' }}>μg/m³</span>
+          </div>
+
           <div style={{ marginTop: '0.8rem', display: 'inline-block', padding: '0.2rem 0.6rem', borderRadius: '12px', fontSize: '0.75rem', background: `${aqiColor}22`, color: aqiColor, fontWeight: 'bold' }}>
-            {getPAQI(liveAvg.pm2_5).label}
+            {getPAQI(liveAvg.aqi).label}
           </div>
         </div>
 
@@ -237,7 +257,7 @@ const Dashboard = ({ readings }) => {
           <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1rem' }}>Coarse (PM10)</div>
           <div style={{ fontSize: '2.8rem', fontWeight: '900', color: 'var(--text)', display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
             {liveAvg.pm10?.toFixed(1) || '---'}
-            <span style={{ fontSize: '1rem', color: 'var(--text-dim)', fontWeight: 'normal' }}>µg/m³</span>
+            <span style={{ fontSize: '1rem', color: 'var(--text-dim)', fontWeight: 'normal' }}>μg/m³</span>
           </div>
         </div>
 
@@ -295,7 +315,7 @@ const Dashboard = ({ readings }) => {
           <div className="glass-panel hover-lift" style={{ padding: '1.5rem', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 'bold', letterSpacing: '1px', marginBottom: '0.5rem' }}>{range.toUpperCase()} PM2.5 PEAK</div>
             <div style={{ fontSize: '2.2rem', fontWeight: '900', color: getAQIColor(peakPm25Stat?.avg_pm2_5) }}>
-              {peakPm25Stat ? peakPm25Stat.avg_pm2_5 : '---'} <span style={{fontSize: '0.9rem', color: 'var(--text-dim)', fontWeight: 'normal'}}>µg/m³</span>
+              {peakPm25Stat ? peakPm25Stat.avg_pm2_5 : '---'} <span style={{fontSize: '0.9rem', color: 'var(--text-dim)', fontWeight: 'normal'}}>AQI</span>
             </div>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: '0.2rem' }}>Occurred: <strong style={{color: 'var(--text)'}}>{peakPm25Stat?.bucket ? new Date(peakPm25Stat.bucket).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '---'}</strong></div>
           </div>
@@ -306,7 +326,7 @@ const Dashboard = ({ readings }) => {
               AI PREDICTED PEAK PM2.5 (24H)
             </div>
             <div style={{ fontSize: '2.2rem', fontWeight: '900', color: predictedAqiColor }}>
-              {maxPredictedPm25 !== null ? maxPredictedPm25.toFixed(1) : '---'} <span style={{fontSize: '0.9rem', color: 'var(--text-dim)', fontWeight: 'normal'}}>µg/m³</span>
+              {maxPredictedPm25 !== null ? maxPredictedPm25.toFixed(1) : '---'} <span style={{fontSize: '0.9rem', color: 'var(--text-dim)', fontWeight: 'normal'}}>AQI</span>
             </div>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginTop: '0.2rem' }}>Status: <strong style={{color: predictedAqiColor}}>{getPAQI(maxPredictedPm25).label}</strong></div>
           </div>

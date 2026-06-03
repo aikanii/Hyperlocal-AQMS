@@ -17,6 +17,7 @@ import {
   upsertTimelinePoint,
   toTimelinePoint,
   getDisplayPm25,
+  getDisplayPm25Conc,
   isReferenceDevice,
   getPm25Unit,
   formatPm25,
@@ -195,9 +196,16 @@ export const ReadingsProvider = ({ apiUrl, children }) => {
   useEffect(() => {
     if (!referenceReading?.time) return;
     const aqi = getReferenceAqi(referenceReading);
-    if (aqi == null) return;
+    // Trigger timeline merge when either AQI or PM2.5 concentration updates
+    // (for the reference node timeline points we persist both).
+    if (aqi == null && referenceReading?.pm2_5_conc_ugm3 == null) return;
     setReferenceTimeline((prev) => mergeTimelineWithReading(prev, referenceReading));
-  }, [referenceReading?.time, referenceReading?.pm25_aqi, referenceReading?.pm2_5_cal]);
+  }, [
+    referenceReading?.time,
+    referenceReading?.pm25_aqi,
+    referenceReading?.pm2_5_cal,
+    referenceReading?.pm2_5_conc_ugm3,
+  ]);
 
   const getReading = useCallback(
     (deviceId) => readings.find((r) => r.device_id === deviceId) ?? null,
@@ -214,6 +222,7 @@ export const ReadingsProvider = ({ apiUrl, children }) => {
       socketError,
       getReading,
       getDisplayPm25: (deviceId) => getDisplayPm25(getReading(deviceId), deviceId),
+      getDisplayPm25Conc: (deviceId) => getDisplayPm25Conc(getReading(deviceId), deviceId),
       isReferenceDevice,
       getPm25Unit,
       formatPm25,

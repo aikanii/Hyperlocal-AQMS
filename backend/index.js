@@ -10,73 +10,8 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { Server } = require('socket.io');
 const cheerio = require('cheerio');
-
-// ── AQI CALCULATION SERVICE ──────────────────────────────────────────────────
-// WHO/US-EPA Air Quality Index (PM2.5-based)
-// Converts PM2.5 concentration (µg/m³) to AQI value (0-500+)
-
-const AQI_BREAKPOINTS = [
-  { max: 50, aqi_max: 50, label: 'Good', color: '#00E400', description: 'Air quality is satisfactory.' },
-  { max: 100, aqi_max: 100, label: 'Moderate', color: '#FFFF00', description: 'Acceptable quality; some concern for very sensitive groups.' },
-  { max: 150, aqi_max: 150, label: 'Unhealthy for Sensitive Groups', color: '#FF7E00', description: 'Sensitive groups experience health effects.' },
-  { max: 200, aqi_max: 200, label: 'Unhealthy', color: '#FF0000', description: 'Everyone begins to experience health effects.' },
-  { max: 300, aqi_max: 300, label: 'Very Unhealthy', color: '#8F3F97', description: 'Health alert: serious health effects for everyone.' },
-  { max: Infinity, aqi_max: 500, label: 'Hazardous', color: '#7E0023', description: 'Health warning of emergency conditions. Avoid outdoor activity.' }
-];
-
-const calculateAQI = (pm25) => {
-  if (pm25 === null || pm25 === undefined || !Number.isFinite(pm25)) {
-    return null;
-  }
-
-  // Find the appropriate breakpoint
-  let breakpoint = null;
-  for (const bp of AQI_BREAKPOINTS) {
-    if (pm25 <= bp.max) {
-      breakpoint = bp;
-      break;
-    }
-  }
-
-  if (!breakpoint) return null;
-
-  // Linear interpolation between breakpoints
-  let prevBp = AQI_BREAKPOINTS[0];
-  for (let i = 0; i < AQI_BREAKPOINTS.length - 1; i++) {
-    if (pm25 <= AQI_BREAKPOINTS[i].max) {
-      prevBp = i > 0 ? AQI_BREAKPOINTS[i - 1] : AQI_BREAKPOINTS[0];
-      breakpoint = AQI_BREAKPOINTS[i];
-      break;
-    }
-    prevBp = AQI_BREAKPOINTS[i];
-  }
-
-  const pm25_low = prevBp.max - (AQI_BREAKPOINTS[AQI_BREAKPOINTS.indexOf(prevBp) > 0 ? AQI_BREAKPOINTS.indexOf(prevBp) - 1 : 0].max || 0);
-  const pm25_high = breakpoint.max;
-  const aqi_low = prevBp.aqi_max - 50;
-  const aqi_high = breakpoint.aqi_max;
-
-  const aqi = ((aqi_high - aqi_low) / (pm25_high - pm25_low)) * (pm25 - pm25_low) + aqi_low;
-  return Math.round(Math.max(0, aqi));
-};
-
-const getAQICategory = (aqi) => {
-  if (aqi === null || aqi === undefined) return null;
-  for (const bp of AQI_BREAKPOINTS) {
-    if (aqi <= bp.aqi_max) {
-      return {
-        label: bp.label,
-        color: bp.color,
-        description: bp.description
-      };
-    }
-  }
-  return {
-    label: 'Hazardous',
-    color: '#7E0023',
-    description: 'Health warning of emergency conditions.'
-  };
-};
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 
@@ -176,6 +111,45 @@ const ensurePredictionsUniqueIndex = async () => {
 };
 ensurePredictionsUniqueIndex();
 
+/**
+ * Idempotent DB migration runner.
+ * This enables applying new SQL files in `backend/database/` even when Postgres
+ * has already been initialized (since docker-entrypoint-initdb.d runs only once).
+ */
+const runSqlMigrations = async () => {
+  const migrationsDir = path.join(__dirname, 'database');
+  const entries = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql'));
+  entries.sort();
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      filename TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  for (const filename of entries) {
+    const already = await pool.query(
+      'SELECT 1 FROM schema_migrations WHERE filename = $1',
+      [filename]
+    );
+    if (already.rows.length > 0) continue;
+
+    const fullPath = path.join(migrationsDir, filename);
+    const sql = fs.readFileSync(fullPath, 'utf8');
+
+    // Execute file contents; relies on SQL being idempotent (uses IF NOT EXISTS).
+    await pool.query(sql);
+
+    await pool.query(
+      'INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT (filename) DO NOTHING',
+      [filename]
+    );
+
+    console.log('[MIGRATIONS] ✓ Applied:', filename);
+  }
+};
+
 // ── REFERENCE NODE — BPIT EMBRX JSON API POLLER ──────────────────────────────
 //
 // The reference node data is sourced from the BPIT EMBRX JSON API:
@@ -203,14 +177,80 @@ let   refPollTimer         = null;
 /** Ensure reference rows expose pm25_aqi for all API consumers (DB stores AQI in pm2_5_cal). */
 const normalizeReferenceRow = (row) => {
   if (!row || row.device_id !== REF_DEVICE_ID) return row;
+
   const aqi = row.pm25_aqi ?? row.pm2_5_cal ?? row.pm2_5;
-  if (aqi == null || !Number.isFinite(Number(aqi))) return row;
-  const n = Number(aqi);
-  return { ...row, pm25_aqi: n, pm2_5_cal: row.pm2_5_cal ?? n };
+  const nAqi = aqi == null || !Number.isFinite(Number(aqi)) ? null : Number(aqi);
+
+  const conc =
+    row.pm2_5_conc_ugm3 ??
+    row.pm25_conc_ugm3 ??
+    row.pm2_5_concentration_ugm3 ??
+    row.pm2_5_concentration;
+
+  const nConc = conc == null || !Number.isFinite(Number(conc)) ? null : Number(conc);
+
+  return {
+    ...row,
+    ...(nAqi == null ? {} : { pm25_aqi: nAqi, pm2_5_cal: row.pm2_5_cal ?? nAqi }),
+    ...(nConc == null ? {} : { pm2_5_conc_ugm3: nConc }),
+  };
+};
+
+const calcPm25ConcFromAQI = (aqi) => {
+  if (!Number.isFinite(Number(aqi))) return null;
+
+  const value = Math.min(Math.max(Number(aqi), 0), 500);
+  const bands = [
+    { aqiLow: 0, aqiHigh: 50, concLow: 0.0, concHigh: 12.0 },
+    { aqiLow: 51, aqiHigh: 100, concLow: 12.1, concHigh: 35.4 },
+    { aqiLow: 101, aqiHigh: 150, concLow: 35.5, concHigh: 55.4 },
+    { aqiLow: 151, aqiHigh: 200, concLow: 55.5, concHigh: 150.4 },
+    { aqiLow: 201, aqiHigh: 300, concLow: 150.5, concHigh: 250.4 },
+    { aqiLow: 301, aqiHigh: 400, concLow: 250.5, concHigh: 350.4 },
+    { aqiLow: 401, aqiHigh: 500, concLow: 350.5, concHigh: 500.4 },
+  ];
+
+  const band =
+    bands.find((entry) => value >= entry.aqiLow && value <= entry.aqiHigh) ||
+    bands[bands.length - 1];
+
+  const conc =
+    ((band.concHigh - band.concLow) / (band.aqiHigh - band.aqiLow)) * (value - band.aqiLow) +
+    band.concLow;
+
+  return Number.isFinite(conc) ? conc : null;
+};
+
+const normalizeReadingRow = (row) => {
+  if (!row) return row;
+  if (row.device_id === REF_DEVICE_ID) return normalizeReferenceRow(row);
+
+  const aqi = row.pm25_aqi ?? row.pm2_5_cal ?? row.pm2_5;
+  const nAqi = aqi == null || !Number.isFinite(Number(aqi)) ? null : Number(aqi);
+
+  const conc =
+    row.pm2_5_conc_ugm3 ??
+    row.pm25_conc_ugm3 ??
+    row.pm2_5_concentration_ugm3 ??
+    row.pm2_5_concentration;
+
+  const nConc = conc == null || !Number.isFinite(Number(conc)) ? null : Number(conc);
+
+  return {
+    ...row,
+    ...(nAqi == null
+      ? {}
+      : {
+          pm25_aqi: nAqi,
+          pm2_5_cal: row.pm2_5_cal ?? nAqi,
+          pm2_5: row.pm2_5 ?? nAqi,
+        }),
+    pm2_5_conc_ugm3: nConc != null ? nConc : calcPm25ConcFromAQI(nAqi),
+  };
 };
 
 const normalizeReferenceRows = (rows) =>
-  Array.isArray(rows) ? rows.map(normalizeReferenceRow) : rows;
+  Array.isArray(rows) ? rows.map(normalizeReadingRow) : rows;
 
 /**
  * Safely parse a string into a finite number, stripping commas.
@@ -270,6 +310,41 @@ const normaliseStation = (stationArray) => {
  *   2. pm25AQI      — current hourly AQI (fallback)
  *   3. pm25_aqi24h / pm25_aqi  — alternate key spellings
  */
+/**
+ * AQI calculator (EPA PM2.5 breakpoints).
+ * Input/Output:
+ *  - pm2.5 concentration: μg/m³
+ *  - AQI: unitless index (0..500+)
+ */
+const calcAQI_PM25 = (pm) => {
+  if (!Number.isFinite(Number(pm))) return 500;
+
+  const bp = [
+    [0.0, 12.0, 0, 50],
+    [12.1, 35.4, 51, 100],
+    [35.5, 55.4, 101, 150],
+    [55.5, 150.4, 151, 200],
+    [150.5, 250.4, 201, 300],
+    [250.5, 350.4, 301, 400],
+    [350.5, 500.4, 401, 500],
+  ];
+
+  for (const b of bp) {
+    const [lo, hi, ilo, ihi] = b;
+    if (pm >= lo && pm <= hi) {
+      const aqi = ((ihi - ilo) / (hi - lo)) * (pm - lo) + ilo;
+      return Math.round(aqi);
+    }
+  }
+  return 500;
+};
+
+// ─────────────────────────────────────────────────────────────
+// Reference node extraction
+// We prefer deriving AQI from PM2.5 concentration (μg/m³).
+// If concentration keys are unavailable, we fall back to AQI-only
+// extraction to keep the app running (legacy behavior).
+// ─────────────────────────────────────────────────────────────
 const extractRefReading = (payload) => {
   if (!Array.isArray(payload) || payload.length === 0) return null;
 
@@ -285,10 +360,21 @@ const extractRefReading = (payload) => {
   const raw = normaliseStation(stationArray);
   if (!raw) return null;
 
-  // pm25AQI24hr is the value displayed on app.bpit-inc.com/iliganstation
+  // Try to extract PM2.5 concentration (μg/m³) from likely keys.
+  // (Key names can differ between DENR feeds / station payloads.)
+  const pm2_5_conc_ugm3 =
+    parseNumber(raw.pm2_5_conc_ugm3) ??
+    parseNumber(raw.pm25_concentration_ugm3) ??
+    parseNumber(raw.pm2_5_concentration_ugm3) ??
+    parseNumber(raw.pm2_5_ugm3) ??
+    parseNumber(raw.pm25_ugm3) ??
+    parseNumber(raw.pm2_5) ??
+    parseNumber(raw.pm25);
+
+  // Try AQI from likely keys (legacy fallback).
   const pm25_aqi =
     parseNumber(raw.pm25AQI24hr) ??
-    parseNumber(raw.pm25AQI)     ??
+    parseNumber(raw.pm25AQI) ??
     parseNumber(raw.pm25_aqi24h) ??
     parseNumber(raw.pm25_aqi);
 
@@ -299,8 +385,6 @@ const extractRefReading = (payload) => {
     raw.ambientHumidity ?? raw.ambient_humidity ?? raw.humidity
   );
 
-  if (pm25_aqi === null) return null;
-
   // Parse timestamp from the station payload
   let time = new Date();
   if (raw.date && typeof raw.date === 'string') {
@@ -308,7 +392,18 @@ const extractRefReading = (payload) => {
     if (!Number.isNaN(parsed.getTime())) time = parsed;
   }
 
-  return { time, pm25_aqi, temperature, humidity };
+  // Prefer concentration->AQI derivation if possible.
+  if (pm2_5_conc_ugm3 != null) {
+    const derivedAqi = calcAQI_PM25(pm2_5_conc_ugm3);
+    return { time, pm2_5_conc_ugm3, pm25_aqi: derivedAqi, temperature, humidity };
+  }
+
+  // Fallback: AQI-only (keeps app functional until concentration keys are confirmed)
+  if (pm25_aqi != null) {
+    return { time, pm2_5_conc_ugm3: null, pm25_aqi, temperature, humidity };
+  }
+
+  return null;
 };
 
 /**
@@ -443,20 +538,18 @@ const processReferenceScraperPoll = async () => {
     const recordedAt = timestamp;
 
     // ── 4. Persist to database ─────────────────────────────────────────────
-    // For reference node, pm25_aqi is the AQI value (not concentration)
-    // Store it as both pm2_5_cal (for compatibility) and pm25_aqi
-    const pm2_5_concentration = reading.pm25_aqi; // The reference API provides AQI directly
-    const pm25_aqi = reading.pm25_aqi;
-    
     await pool.query(
-      `INSERT INTO readings (time, device_id, pm2_5, pm2_5_cal, pm25_aqi, temperature, humidity)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      `INSERT INTO readings
+         (time, device_id, pm2_5, pm2_5_cal, pm2_5_conc_ugm3, pm25_aqi, temperature, humidity)
+       VALUES
+         ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         recordedAt,
         REF_DEVICE_ID,
-        pm2_5_concentration,
-        pm2_5_concentration,
-        pm25_aqi,
+        pm25Value,                 // legacy: pm2_5 stores AQI for now
+        pm25Value,                 // legacy calibrated AQI
+        reading.pm2_5_conc_ugm3 ?? null, // μg/m³
+        pm25Value,                 // unitless AQI
         reading.temperature ?? null,
         reading.humidity    ?? null,
       ]
@@ -466,9 +559,15 @@ const processReferenceScraperPoll = async () => {
     const cachedReading = {
       time:        recordedAt,
       device_id:   REF_DEVICE_ID,
-      pm2_5:       pm2_5_concentration,
-      pm25_aqi:    pm25_aqi,
-      pm2_5_cal:   pm2_5_concentration,
+
+      // New canonical fields
+      pm2_5_conc_ugm3: reading.pm2_5_conc_ugm3 ?? null,
+      pm25_aqi: pm25Value,
+
+      // Legacy fields (kept so existing UI doesn't break)
+      pm2_5:       pm25Value,
+      pm2_5_cal:   pm25Value,
+
       temperature: reading.temperature ?? null,
       humidity:    reading.humidity    ?? null,
       source_time: reading.time,
@@ -542,20 +641,32 @@ const processPredictionBatch = async () => {
       if (predictions && Array.isArray(predictions) && predictions.length > 0) {
         // Batch insert predictions with efficient conflict handling
         const predQuery = `
-          INSERT INTO predictions (time, device_id, pm2_5_cal, temperature, humidity, created_at) 
-          VALUES ($1, $2, $3, $4, $5, NOW())
-          ON CONFLICT (time, device_id) 
-          DO UPDATE SET 
-            pm2_5_cal = EXCLUDED.pm2_5_cal, 
-            temperature = EXCLUDED.temperature, 
-            humidity = EXCLUDED.humidity, 
+          INSERT INTO predictions
+            (time, device_id, pm2_5_cal, pm2_5_conc_ugm3, pm25_aqi, temperature, humidity, created_at)
+          VALUES
+            ($1, $2, $3, $4, $5, $6, $7, NOW())
+          ON CONFLICT (time, device_id)
+          DO UPDATE SET
+            pm2_5_cal = EXCLUDED.pm2_5_cal,
+            pm2_5_conc_ugm3 = EXCLUDED.pm2_5_conc_ugm3,
+            pm25_aqi = EXCLUDED.pm25_aqi,
+            temperature = EXCLUDED.temperature,
+            humidity = EXCLUDED.humidity,
             created_at = NOW()
         `;
         
         // Batch process: use Promise.all for parallel inserts
         await Promise.all(
-          predictions.map(p => 
-            pool.query(predQuery, [p.time || new Date(), p.device_id || 'city', p.pm2_5_cal, p.temperature, p.humidity])
+          predictions.map((p) =>
+            pool.query(predQuery, [
+              p.time || new Date(),
+              p.device_id || 'city',
+              p.pm2_5_cal,
+              p.pm2_5_conc_ugm3 ?? null,
+              p.pm25_aqi ?? p.pm2_5_cal,
+              p.temperature,
+              p.humidity,
+            ])
               .catch(err => console.error(`[PRED] Insert error for ${p.device_id}:`, err.message))
           )
         );
@@ -766,49 +877,71 @@ mqttClient.on('message', async (topic, message) => {
     const topicParts = topic.split('/');
     const deviceId = topicParts[2];
     
-    const pm2_5 = payload.pm2_5 !== undefined ? Number(payload.pm2_5) : null;
+    const pm2_5_conc_ugm3 =
+      payload.pm2_5_conc_ugm3 !== undefined ? Number(payload.pm2_5_conc_ugm3) : null;
     const pm10 = payload.pm10 !== undefined ? Number(payload.pm10) : null;
     const temperature = payload.temperature !== undefined ? Number(payload.temperature) : null;
     const humidity = payload.humidity !== undefined ? Number(payload.humidity) : null;
     const rssi = payload.rssi_dbm !== undefined ? Number(payload.rssi_dbm) : null;
     const battery = payload.battery_mv !== undefined ? Number(payload.battery_mv) : null;
 
-    // Fetch and apply calibration coefficients
-    let pm2_5_cal = pm2_5;
+    // Derive AQI unitless from concentration if provided; otherwise fall back to legacy payload.pm2_5 (AQI).
+    const rawAqi =
+      pm2_5_conc_ugm3 != null && Number.isFinite(pm2_5_conc_ugm3)
+        ? calcAQI_PM25(pm2_5_conc_ugm3)
+        : (payload.pm2_5 !== undefined ? Number(payload.pm2_5) : null);
+
+    const equivalentPm25Conc =
+      pm2_5_conc_ugm3 != null && Number.isFinite(pm2_5_conc_ugm3)
+        ? pm2_5_conc_ugm3
+        : calcPm25ConcFromAQI(rawAqi);
+
+    // Calibrate AQI only (bias correction) for per-device bias.
+    let pm25_aqi = rawAqi;
     try {
-      const deviceRes = await pool.query('SELECT calibration_coefficients FROM devices WHERE device_id = $1', [deviceId]);
+      const deviceRes = await pool.query(
+        'SELECT calibration_coefficients FROM devices WHERE device_id = $1',
+        [deviceId]
+      );
       if (deviceRes.rows.length > 0 && deviceRes.rows[0].calibration_coefficients) {
         const coeffs = deviceRes.rows[0].calibration_coefficients;
         const slope = Number(coeffs.pm2_5_slope) || 1.0;
         const intercept = Number(coeffs.pm2_5_intercept) || 0.0;
-        if (pm2_5 !== null) {
-          pm2_5_cal = (pm2_5 * slope) + intercept;
+        if (rawAqi !== null && rawAqi !== undefined) {
+          pm25_aqi = (rawAqi * slope) + intercept;
+          if (pm25_aqi < 0) pm25_aqi = 0; // AQI should not be negative
         }
       }
     } catch (calibErr) {
-      console.debug(`[CAL:${deviceId}] ℹ Using raw PM2.5 (no calibration found):`, calibErr.message);
+      console.debug(
+        `[CAL:${deviceId}] ℹ Using raw AQI as-is (no calibration found):`,
+        calibErr.message
+      );
     }
 
     const timestamp = new Date();
-    
-    // Calculate AQI from calibrated PM2.5 concentration
-    const pm25_aqi = pm2_5_cal !== null ? calculateAQI(pm2_5_cal) : null;
-    
     const query = `
       INSERT INTO readings (
-        time, device_id, pm2_5, pm10, pm2_5_cal, pm25_aqi, temperature, humidity, rssi_dbm, battery_mv
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        time, device_id, pm2_5, pm10, pm2_5_cal, pm2_5_conc_ugm3, pm25_aqi, temperature, humidity, rssi_dbm, battery_mv
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
     `;
     const values = [
-      timestamp, deviceId,
-      pm2_5, pm10,
-      pm2_5_cal, pm25_aqi, temperature, humidity,
-      rssi, battery
+      timestamp,
+      deviceId,
+      rawAqi,        // legacy: pm2_5 stores AQI-like value
+      pm10,
+      pm25_aqi,      // legacy: pm2_5_cal stores calibrated AQI
+      equivalentPm25Conc,
+      pm25_aqi,      // explicit canonical unitless AQI
+      temperature,
+      humidity,
+      rssi,
+      battery,
     ];
     
     try {
       await pool.query(query, values);
-      console.log(`[DB:${deviceId}] ✓ Reading inserted (PM2.5: ${pm2_5_cal}, AQI: ${pm25_aqi})`);
+      console.log(`[DB:${deviceId}] ✓ Reading inserted`);
     } catch (dbErr) {
       console.error(`[DB:${deviceId}] ✗ Insert failed:`, dbErr.message);
       // Don't re-throw - log and continue so socket broadcast and cache still happen
@@ -816,10 +949,22 @@ mqttClient.on('message', async (topic, message) => {
     
     // Broadcast via Socket.IO with error handling
     const readingData = {
-      time: timestamp, device_id: deviceId,
-      pm2_5: payload.pm2_5, pm10: payload.pm10,
-      pm2_5_cal: pm2_5_cal, pm25_aqi: pm25_aqi, temperature: payload.temperature,
-      humidity: payload.humidity, rssi_dbm: payload.rssi_dbm, battery_mv: payload.battery_mv
+      time: timestamp,
+      device_id: deviceId,
+
+      // Canonical fields
+      pm2_5_conc_ugm3: equivalentPm25Conc,
+      pm25_aqi: pm25_aqi,
+
+      // Legacy fields (kept so existing UI doesn't break)
+      pm2_5: rawAqi,
+      pm2_5_cal: pm25_aqi,
+
+      pm10: pm10,
+      temperature: temperature,
+      humidity: humidity,
+      rssi_dbm: rssi,
+      battery_mv: battery,
     };
     
     if (io.engine.clientsCount > 0) {
@@ -920,10 +1065,10 @@ app.get('/api/devices/:id/latest', async (req, res) => {
   try {
     const { id } = req.params;
     const cached = await redisClient.get(`device:latest:${id}`);
-    if (cached) return res.json(JSON.parse(cached));
+    if (cached) return res.json(normalizeReadingRow(JSON.parse(cached)));
     const result = await pool.query('SELECT * FROM readings WHERE device_id = $1 ORDER BY time DESC LIMIT 1', [id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'No readings found' });
-    res.json(result.rows[0]);
+    res.json(normalizeReadingRow(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -942,7 +1087,7 @@ app.get('/api/external/embrx/latest', async (req, res) => {
     try {
       const cached = await Promise.race([redisPromise, timeoutPromise]);
       if (cached) {
-        return res.json(normalizeReferenceRow(JSON.parse(cached)));
+        return res.json(normalizeReadingRow(JSON.parse(cached)));
       }
     } catch (rediErr) {
       console.warn('[EMBR-X] ⚠ Redis get timed out or failed:', rediErr.message);
@@ -951,7 +1096,7 @@ app.get('/api/external/embrx/latest', async (req, res) => {
     
     // Fallback to database if cache miss or Redis timeout
     const result = await pool.query(
-      'SELECT time, device_id, pm2_5, pm2_5_cal, temperature, humidity FROM readings WHERE device_id = $1 ORDER BY time DESC LIMIT 1',
+      'SELECT time, device_id, pm2_5, pm2_5_cal, pm2_5_conc_ugm3, pm25_aqi, temperature, humidity FROM readings WHERE device_id = $1 ORDER BY time DESC LIMIT 1',
       [EMBR_X_DEVICE_ID]
     );
     if (result.rows.length === 0) {
@@ -1071,7 +1216,6 @@ app.get('/api/stats/city', async (req, res) => {
         time_bucket('${bucket}', time) AS bucket,
         ROUND(AVG(pm2_5_cal)::numeric, 2) AS avg_pm2_5,
         ROUND(AVG(pm10)::numeric, 2) AS avg_pm10,
-        ROUND(AVG(pm25_aqi)::numeric, 2) AS avg_aqi,
         ROUND(AVG(temperature)::numeric, 2) AS avg_temperature,
         ROUND(AVG(humidity)::numeric, 2) AS avg_humidity
       FROM readings
@@ -1107,7 +1251,6 @@ app.get('/api/stats/device/:id', async (req, res) => {
         time_bucket('${bucket}', time) AS bucket,
         ROUND(AVG(pm2_5_cal)::numeric, 2) AS avg_pm2_5,
         ROUND(AVG(pm10)::numeric, 2) AS avg_pm10,
-        ROUND(AVG(pm25_aqi)::numeric, 2) AS avg_aqi,
         ROUND(AVG(temperature)::numeric, 2) AS avg_temperature,
         ROUND(AVG(humidity)::numeric, 2) AS avg_humidity
       FROM readings
@@ -1126,7 +1269,7 @@ app.get('/api/stats/device/:id', async (req, res) => {
 app.get('/api/export', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { device_id, start, end } = req.query;
-    let query = 'SELECT time, device_id, pm2_5, pm10, pm2_5_cal, pm25_aqi, temperature, humidity, rssi_dbm, battery_mv FROM readings WHERE 1=1';
+    let query = 'SELECT time, device_id, pm2_5, pm10, pm2_5_cal, temperature, humidity, rssi_dbm, battery_mv FROM readings WHERE 1=1';
     const values = [];
     let idx = 1;
 
@@ -1246,6 +1389,7 @@ const server = app.listen(PORT, async () => {
   console.log(`Backend server listening on port ${PORT}`);
   initServer(server);
   startPredictionBatchProcessor();   // Start batch prediction processor
+  await runSqlMigrations();          // Apply any pending SQL migrations in backend/database
   await ensureRefDeviceRecord();     // Ensure reference device row exists
   startReferenceScraperPoller();     // Start HTML scraper for reference PM2.5
 });

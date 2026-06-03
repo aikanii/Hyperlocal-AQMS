@@ -2,23 +2,7 @@ import { REFERENCE_DEVICE_ID, MAX_REFERENCE_TIMELINE_POINTS } from '../constants
 
 export const isReferenceDevice = (deviceId) => deviceId === REFERENCE_DEVICE_ID;
 
-/** Get AQI value from reading (prefer pm25_aqi field). */
-export const getAQIValue = (reading) => {
-  if (!reading) return null;
-  const v = reading.pm25_aqi;
-  if (v == null || !Number.isFinite(Number(v))) return null;
-  return Number(v);
-};
-
-/** Get PM2.5 concentration from reading (µg/m³). */
-export const getPM25Concentration = (reading) => {
-  if (!reading) return null;
-  const v = reading.pm2_5_cal ?? reading.pm2_5;
-  if (v == null || !Number.isFinite(Number(v))) return null;
-  return Number(v);
-};
-
-/** Canonical AQI value for the reference node (EPA index from BPIT feed). */
+/** Canonical AQI value (unitless) for the reference node (EPA index). */
 export const getReferenceAqi = (reading) => {
   if (!reading) return null;
   const v = reading.pm25_aqi ?? reading.pm2_5_cal ?? reading.pm2_5;
@@ -26,30 +10,89 @@ export const getReferenceAqi = (reading) => {
   return Number(v);
 };
 
-/** PM2.5 display value: AQI for reference, calibrated µg/m³ for sensors. */
-export const getDisplayPm25 = (reading, deviceId) => {
+const PM25_BREAKPOINTS = [
+  { aqiLow: 0, aqiHigh: 50, concLow: 0.0, concHigh: 12.0 },
+  { aqiLow: 51, aqiHigh: 100, concLow: 12.1, concHigh: 35.4 },
+  { aqiLow: 101, aqiHigh: 150, concLow: 35.5, concHigh: 55.4 },
+  { aqiLow: 151, aqiHigh: 200, concLow: 55.5, concHigh: 150.4 },
+  { aqiLow: 201, aqiHigh: 300, concLow: 150.5, concHigh: 250.4 },
+  { aqiLow: 301, aqiHigh: 400, concLow: 250.5, concHigh: 350.4 },
+  { aqiLow: 401, aqiHigh: 500, concLow: 350.5, concHigh: 500.4 },
+];
+
+const inverseAqiToPm25Conc = (aqi) => {
+  if (aqi == null || !Number.isFinite(Number(aqi))) return null;
+
+  const value = Number(aqi);
+  const clamped = Math.min(Math.max(value, 0), 500);
+  const band = PM25_BREAKPOINTS.find((entry) => clamped >= entry.aqiLow && clamped <= entry.aqiHigh)
+    || PM25_BREAKPOINTS[PM25_BREAKPOINTS.length - 1];
+
+  const concentration =
+    ((band.concHigh - band.concLow) / (band.aqiHigh - band.aqiLow)) * (clamped - band.aqiLow) +
+    band.concLow;
+
+  return Number.isFinite(concentration) ? concentration : null;
+};
+
+/**
+ * AQI display value (unitless).
+ * - Reference node: reading.pm25_aqi (or fallbacks)
+ * - Non-reference sensors: prefer reading.pm25_aqi, otherwise fall back to legacy AQI fields.
+ */
+export const getDisplayAqi = (reading, deviceId) => {
   if (!reading) return null;
+
   if (isReferenceDevice(deviceId)) return getReferenceAqi(reading);
-  const v = reading.pm2_5_cal ?? reading.pm2_5;
+
+  const v = reading.pm25_aqi ?? reading.pm2_5_cal ?? reading.pm2_5;
   return v != null && Number.isFinite(Number(v)) ? Number(v) : null;
 };
 
-export const getPm25Unit = (deviceId) => (isReferenceDevice(deviceId) ? 'AQI' : 'µg/m³');
+/**
+ * PM2.5 concentration display value (μg/m³).
+ * Reference node uses its stored concentration. Other sensors derive an
+ * equivalent concentration from AQI when the concentration field is absent.
+ */
+export const getDisplayPm25Conc = (reading, deviceId) => {
+  if (!reading) return null;
+
+  const stored = reading.pm2_5_conc_ugm3;
+  if (stored != null && Number.isFinite(Number(stored))) return Number(stored);
+
+  if (isReferenceDevice(deviceId)) return null;
+
+  const aqi = getDisplayAqi(reading, deviceId);
+  return inverseAqiToPm25Conc(aqi);
+};
+
+/**
+ * Backward-compatible alias: existing UI calls getDisplayPm25() for AQI.
+ * Keep it to avoid breaking unmodified screens.
+ */
+export const getDisplayPm25 = (reading, deviceId) => getDisplayAqi(reading, deviceId);
+
+/** AQI unit label is unitless everywhere in AQI UI. */
+export const getPm25Unit = () => 'AQI';
 
 export const formatPm25 = (value, deviceId) => {
   if (value == null) return '---';
   return isReferenceDevice(deviceId) ? value.toFixed(0) : value.toFixed(1);
 };
 
-/** Normalize reference reading so pm25_aqi is always set from stored columns. */
+/** Normalize reference reading so pm25_aqi and pm2_5_conc_ugm3 are always set from stored columns. */
 export const normalizeReferenceReading = (reading) => {
   if (!reading || !isReferenceDevice(reading.device_id)) return reading;
+
   const aqi = getReferenceAqi(reading);
-  if (aqi == null) return reading;
+  const conc = reading.pm2_5_conc_ugm3;
+
+  if (aqi == null && conc == null) return reading;
+
   return {
     ...reading,
-    pm25_aqi: aqi,
-    pm2_5_cal: reading.pm2_5_cal ?? aqi,
+    ...(aqi == null ? {} : { pm25_aqi: aqi, pm2_5_cal: reading.pm2_5_cal ?? aqi }),
+    ...(conc == null ? {} : { pm2_5_conc_ugm3: conc }),
   };
 };
 
@@ -84,14 +127,26 @@ const timelineKey = (time) => {
 /** Normalize timeline point shape. */
 export const toTimelinePoint = (readingOrPoint) => {
   if (!readingOrPoint?.time) return null;
+
   const aqi =
     readingOrPoint.pm25_aqi != null
       ? Number(readingOrPoint.pm25_aqi)
       : getReferenceAqi(readingOrPoint);
+
   if (aqi == null || !Number.isFinite(aqi)) return null;
+
+  const conc =
+    readingOrPoint.pm2_5_conc_ugm3 != null
+      ? Number(readingOrPoint.pm2_5_conc_ugm3)
+      : null;
+
   return {
     time: readingOrPoint.time,
     pm25_aqi: aqi,
+
+    // Preserve PM2.5 concentration (μg/m³) independently for UI/charting.
+    pm2_5_conc_ugm3: conc != null && Number.isFinite(conc) ? conc : null,
+
     temperature: readingOrPoint.temperature ?? null,
     humidity: readingOrPoint.humidity ?? null,
   };

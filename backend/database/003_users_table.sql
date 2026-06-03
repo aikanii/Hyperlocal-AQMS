@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Default admin:admin (correct bcrypt hash for 'admin')
+-- Default admin:hyperocalityaqmsthesis (bcrypt hash regenerated for new password)
 INSERT INTO users (username, password_hash) 
-VALUES ('admin', '$2a$10$weeJoUKiY.1rpvB0es/Diud6Lzc2byx.LmMhuL5z77PWMyHfErvm2') 
+VALUES ('admin', '$2a$10$EvPnzFIR3AGO45ZYrLvVru7TvMuIEHmoS2C43jvZ5a18JeW5jftOm') 
 ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash;
+

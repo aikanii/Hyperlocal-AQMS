@@ -7,12 +7,20 @@ const VALID_REGION_IDS = ['all', 'Poblacion', 'Tibanga', 'Pala-o', 'Tambacan', '
 
 const getApiBaseUrlClient = () => {
   if (typeof window === 'undefined') return 'http://localhost:3000';
+
+  const runtimeUrl = window.__AQMS_API_URL__;
+  if (runtimeUrl) return runtimeUrl;
+
   const localOverride = window.localStorage.getItem('aqms_api_url');
   if (localOverride) return localOverride;
+
   const prodConfigUrl = window.localStorage.getItem('aqms_production_api_url');
   if (prodConfigUrl && prodConfigUrl !== 'https://dashboard.yourdomain.com') return prodConfigUrl;
+
   if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+
   if (window.location.hostname.endsWith('.vercel.app')) return 'http://localhost:3000';
+
   return window.location.origin;
 };
 

@@ -121,7 +121,12 @@ const ReferenceTimeline = ({ timeline = [] }) => {
               </div>
               <div style={{ fontSize: '1.25rem', fontWeight: '800', color }}>
                 {Math.round(point.pm25_aqi)}{' '}
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 'normal' }}>AQI (24h)</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)', fontWeight: 'normal' }}>AQI (unitless)</span>
+              </div>
+
+              <div style={{ marginTop: '0.25rem', fontSize: '0.95rem', fontWeight: '700', color: 'var(--text)' }}>
+                PM2.5: {point.pm2_5_conc_ugm3 != null && Number.isFinite(Number(point.pm2_5_conc_ugm3)) ? Number(point.pm2_5_conc_ugm3).toFixed(1) : '---'}{' '}
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)', fontWeight: 'normal' }}>μg/m³</span>
               </div>
             </div>
           </div>
