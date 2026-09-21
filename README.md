@@ -91,56 +91,91 @@ HY-AQMS is a **hyperlocal, calibrated, forecast-capable** air quality platform:
 ### High-Level System Architecture
 
 ```mermaid
-graph TB
-    subgraph Edge["Edge Tier — Iligan City"]
-        ESP32A[ESP32 Node A<br/>PMS5003 + DHT22]
-        ESP32B[ESP32 Node B]
-        ESP32N[ESP32 Node N]
-        REF[DENR-EMB Reference<br/>BPIT EMBRX API]
-    end
+flowchart TD
 
-    subgraph Ingestion["Ingestion Tier"]
-        MOS[Mosquitto MQTT<br/>:1883 plain / :8883 TLS]
-        POLLER[Reference Poller<br/>5-min JSON fetch]
-    end
+subgraph group_edge["Edge Ingestion"]
+  node_sensor_firmware["Sensor Firmware<br/>[main.cpp]"]
+  node_mqtt_broker["MQTT Broker"]
+  node_reference_station["EMBRX Station"]
+end
 
-    subgraph Core["Core Services Tier"]
-        BE[Express Backend<br/>:3000 + Socket.IO]
-        REDIS[(Redis Cache<br/>:6379)]
-        TS[(TimescaleDB<br/>:5432 hypertables)]
-        ML[FastAPI ML Service<br/>:8000 PyTorch LSTM]
-    end
+subgraph group_core["Core Data Services"]
+  node_reference_poller["Reference Poller<br/>[index.js]"]
+  node_backend_api["Backend API<br/>[index.js]"]
+  node_timescale_db[("TimescaleDB")]
+  node_redis_cache[("Redis Cache")]
+  node_socket_channel["Realtime Channel<br/>[index.js]"]
+end
 
-    subgraph Delivery["Delivery Tier"]
-        NGINX[Nginx Reverse Proxy<br/>:80 → 443 SSL]
-        FE[Vite React SPA<br/>Dashboard / Map / Analytics]
-        WS[WebSocket Channel<br/>/socket.io /ws]
-    end
+subgraph group_ml["Forecasting"]
+  node_ml_api["ML API<br/>[main.py]"]
+  node_ml_database["Historical Queries<br/>[database.py]"]
+  node_forecast_model["LSTM Model<br/>[model.py]"]
+  node_training_pipeline["Training Pipeline<br/>[train.py]"]
+  node_preprocessing["Time Preprocessing<br/>[pipeline.py]"]
+end
 
-    subgraph Ops["Ops & Observability"]
-        PROM[Prometheus]
-        GRAF[Grafana]
-        CERT[Certbot<br/>Let’s Encrypt]
-        MINIO[(MinIO<br/>Exports & Backups)]
-    end
+subgraph group_ui["Web Application"]
+  node_frontend_shell["React Shell<br/>[App.jsx]"]
+  node_readings_state["Readings State"]
+  node_map_view["Map View<br/>[MapView.jsx]"]
+  node_analytics_view["Analytics View<br/>[Analytics.jsx]"]
+  node_device_view["Device Admin<br/>[Devices.jsx]"]
+  node_calibration_view["Calibration View<br/>[Calibration.jsx]"]
+end
 
-    ESP32A -->|MQTT TLS pm2.5, temp, hum| MOS
-    ESP32B --> MOS
-    ESP32N --> MOS
-    REF -->|HTTPS JSON pm25AQI24hr| POLLER
-    POLLER -->|normalize + insert| TS
-    MOS -->|subscribe aqms/+/+/data| BE
-    BE <--> REDIS
-    BE <--> TS
-    BE <-->|/api/ml/* proxy| ML
-    ML <-->|fetch 60d history| TS
-    BE --> WS --> FE
-    BE -->|REST /api/*| NGINX
-    ML -->|via Nginx| NGINX
-    FE --> NGINX
-    NGINX --- CERT
-    BE -.-> PROM --> GRAF
-    BE -.-> MINIO
+node_public_user(("Public User"))
+
+node_sensor_firmware -->|"publishes readings"| node_mqtt_broker
+node_mqtt_broker -->|"delivers MQTT"| node_backend_api
+node_reference_poller -->|"polls station"| node_reference_station
+node_reference_poller -->|"stores reference"| node_timescale_db
+node_backend_api -->|"reads and writes"| node_timescale_db
+node_backend_api -->|"caches readings"| node_redis_cache
+node_backend_api -->|"broadcasts updates"| node_socket_channel
+node_backend_api -.->|"proxies forecasts"| node_ml_api
+node_ml_api -->|"fetches history"| node_ml_database
+node_ml_database -->|"queries readings"| node_timescale_db
+node_ml_api -->|"runs inference"| node_forecast_model
+node_ml_api -->|"triggers training"| node_training_pipeline
+node_training_pipeline -->|"prepares sequences"| node_preprocessing
+node_frontend_shell -->|"provides context"| node_readings_state
+node_readings_state -->|"fetches readings"| node_backend_api
+node_socket_channel -->|"streams readings"| node_readings_state
+node_frontend_shell -->|"renders map"| node_map_view
+node_frontend_shell -->|"renders analytics"| node_analytics_view
+node_frontend_shell -->|"renders devices"| node_device_view
+node_frontend_shell -->|"renders calibration"| node_calibration_view
+node_public_user -->|"views dashboard"| node_frontend_shell
+node_public_user -->|"authenticates and exports"| node_backend_api
+
+click node_sensor_firmware "https://github.com/aikanii/hyperlocal-aqms/blob/main/firmware/src/main.cpp"
+click node_reference_poller "https://github.com/aikanii/hyperlocal-aqms/blob/main/backend/index.js"
+click node_backend_api "https://github.com/aikanii/hyperlocal-aqms/blob/main/backend/index.js"
+click node_socket_channel "https://github.com/aikanii/hyperlocal-aqms/blob/main/backend/index.js"
+click node_ml_api "https://github.com/aikanii/hyperlocal-aqms/blob/main/ml-service/main.py"
+click node_ml_database "https://github.com/aikanii/hyperlocal-aqms/blob/main/ml-service/database.py"
+click node_forecast_model "https://github.com/aikanii/hyperlocal-aqms/blob/main/ml-service/model.py"
+click node_training_pipeline "https://github.com/aikanii/hyperlocal-aqms/blob/main/ml-service/train.py"
+click node_preprocessing "https://github.com/aikanii/hyperlocal-aqms/blob/main/ml-service/pipeline.py"
+click node_frontend_shell "https://github.com/aikanii/hyperlocal-aqms/blob/main/frontend/src/App.jsx"
+click node_readings_state "https://github.com/aikanii/hyperlocal-aqms/blob/main/frontend/src/contexts/ReadingsContext.jsx"
+click node_map_view "https://github.com/aikanii/hyperlocal-aqms/blob/main/frontend/src/components/MapView.jsx"
+click node_analytics_view "https://github.com/aikanii/hyperlocal-aqms/blob/main/frontend/src/components/Analytics.jsx"
+click node_device_view "https://github.com/aikanii/hyperlocal-aqms/blob/main/frontend/src/components/Devices.jsx"
+click node_calibration_view "https://github.com/aikanii/hyperlocal-aqms/blob/main/frontend/src/components/Calibration.jsx"
+
+classDef toneNeutral fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+classDef toneBlue fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef toneAmber fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
+classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef toneTeal fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+class node_sensor_firmware,node_mqtt_broker,node_reference_station,node_public_user toneBlue
+class node_reference_poller,node_backend_api,node_timescale_db,node_redis_cache,node_socket_channel toneAmber
+class node_ml_api,node_ml_database,node_forecast_model,node_training_pipeline,node_preprocessing toneMint
+class node_frontend_shell,node_readings_state,node_map_view,node_analytics_view,node_device_view,node_calibration_view toneRose
 ```
 
 ### Container Topology (docker-compose)
