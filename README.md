@@ -1,4 +1,6 @@
-# Hyperlocal Air Quality Monitoring System (HY-AQMS)
+<p align="center">
+  
+  # Hyperlocal Air Quality Monitoring System (HY-AQMS)
 
 <p align="center">
   <strong>Real-time, hyperlocal PM<sub>2.5</sub> monitoring with calibrated sensors, TimescaleDB, MQTT, and LSTM forecasting.</strong><br/>
